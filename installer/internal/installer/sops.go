@@ -58,9 +58,33 @@ func sharedUserSecretPath(repoRoot string) string {
 	return filepath.Join(repoRoot, "secrets", "user.yaml")
 }
 
-func sopsCanDecrypt(repoRoot, secretFile string, env map[string]string) bool {
+func commonSecretPath(repoRoot string) string {
+	return filepath.Join(repoRoot, "secrets", "common.yaml")
+}
+
+var sopsCanDecrypt = sopsCanDecryptWithConfig
+
+func sopsCanDecryptWithConfig(repoRoot, secretFile string, env map[string]string) bool {
 	_, _, err := run([]string{"sops", "--config", filepath.Join(repoRoot, ".sops.yaml"), "--decrypt", secretFile}, env, "")
 	return err == nil
+}
+
+func encryptedCommonSecretExists(repoRoot string) bool {
+	secretFile := commonSecretPath(repoRoot)
+	return fileExists(secretFile) && isSopsFile(secretFile)
+}
+
+func assertCommonSecretDecryptable(repoRoot string, env map[string]string) error {
+	if !encryptedCommonSecretExists(repoRoot) {
+		return nil
+	}
+	if env["SOPS_AGE_KEY_FILE"] == "" {
+		return fmt.Errorf("encrypted secrets/common.yaml exists but no age key is available; provide --age-key-file or set SOPS_AGE_KEY_FILE")
+	}
+	if !sopsCanDecrypt(repoRoot, commonSecretPath(repoRoot), env) {
+		return fmt.Errorf("the provided age key cannot decrypt secrets/common.yaml")
+	}
+	return nil
 }
 
 func secretStatus(repoRoot, ageKeyFile string) (SecretStatus, error) {
@@ -257,6 +281,21 @@ func writeRuntimeSecretsFile(localDir, passwordHash string) error {
 	return os.WriteFile(filepath.Join(localDir, "runtime-secrets.nix"), []byte(content), 0o600)
 }
 
+func persistInstalledAgeKey(mountPoint, ageKeyFile string) error {
+	if ageKeyFile == "" {
+		return nil
+	}
+	content, err := os.ReadFile(ageKeyFile)
+	if err != nil {
+		return err
+	}
+	targetDir := filepath.Join(mountPoint, "var/lib/sops-nix")
+	if err := os.MkdirAll(targetDir, 0o700); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(targetDir, "key.txt"), content, 0o600)
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
@@ -288,7 +327,7 @@ func RekeySharedSecrets(repoRoot, ageKeyFile string) error {
 	}
 
 	for _, secretFile := range []string{
-		filepath.Join(repoRoot, "secrets", "common.yaml"),
+		commonSecretPath(repoRoot),
 		sharedUserSecretPath(repoRoot),
 	} {
 		if !fileExists(secretFile) {

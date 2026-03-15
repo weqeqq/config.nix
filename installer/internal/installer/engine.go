@@ -291,6 +291,9 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 	if err != nil {
 		return err
 	}
+	if err := assertCommonSecretDecryptable(repoRoot, env); err != nil {
+		return err
+	}
 	if request.SecretMode == SecretModeCreate || request.SecretMode == SecretModeReplace {
 		if request.Password == "" {
 			return fmt.Errorf("password is required when creating or replacing the shared user secret")
@@ -393,12 +396,12 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseSecrets, Message: err.Error()})
 		return err
 	}
-	if fileExists(filepath.Join(repoRoot, "secrets", "common.yaml")) && isSopsFile(filepath.Join(repoRoot, "secrets", "common.yaml")) {
+	if encryptedCommonSecretExists(repoRoot) {
 		if _, err := requireOK([]string{
 			"sops",
 			"--config", filepath.Join(repoRoot, ".sops.yaml"),
 			"updatekeys", "-y",
-			filepath.Join(repoRoot, "secrets", "common.yaml"),
+			commonSecretPath(repoRoot),
 		}, env, ""); err != nil {
 			emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseSecrets, Message: err.Error()})
 			return err
@@ -420,6 +423,12 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 	if err := copyRepoSnapshot(repoRoot, targetRepoRoot); err != nil {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhasePersist, Message: err.Error()})
 		return err
+	}
+	if encryptedCommonSecretExists(repoRoot) {
+		if err := persistInstalledAgeKey(request.MountPoint, env["SOPS_AGE_KEY_FILE"]); err != nil {
+			emit(sink, Event{Kind: EventPhaseFailed, Phase: PhasePersist, Message: err.Error()})
+			return err
+		}
 	}
 
 	stateDir := filepath.Join(request.MountPoint, "var/lib/config-nix")
