@@ -44,6 +44,8 @@
       mkHome = import ./lib/mkHome.nix {
         inherit inputs hostMeta;
       };
+      bootstrapRepoUrl = "https://github.com/weqeqq/config.nix.git";
+      bootstrapRepoRev = if self ? rev then self.rev else "";
       stripSharedPrelude = scriptText:
         lib.replaceStrings
           [
@@ -70,6 +72,10 @@ source "$script_dir/common.sh"
             (builtins.readFile ./scripts/common.sh);
         in
         ''
+          export CONFIG_NIX_BOOTSTRAP_REPO_URL=${lib.escapeShellArg bootstrapRepoUrl}
+          export CONFIG_NIX_BOOTSTRAP_REV=${lib.escapeShellArg bootstrapRepoRev}
+          export CONFIG_NIX_FLAKE_SOURCE=${lib.escapeShellArg self.outPath}
+
           ${commonBody}
 
           ${stripSharedPrelude (builtins.readFile scriptPath)}

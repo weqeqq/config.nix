@@ -9,6 +9,7 @@ source "$script_dir/common.sh"
 
 host=""
 host_key_file=""
+repo_arg=""
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -20,16 +21,19 @@ while [[ "$#" -gt 0 ]]; do
       host_key_file="$2"
       shift 2
       ;;
+    --repo)
+      repo_arg="$2"
+      shift 2
+      ;;
     *)
       die "unknown argument: $1"
       ;;
   esac
 done
 
-[[ -n "$host" ]] || die "usage: nix run .#rekey-host -- --host <name> [--host-key-file /path/to/key.txt]"
+[[ -n "$host" ]] || die "usage: nix run .#rekey-host -- --host <name> [--repo /path/to/checkout] [--host-key-file /path/to/key.txt]"
 
-repo_root="$(resolve_repo_root)"
-ensure_flake_repo "$repo_root"
+repo_root="$(prepare_repo_root "$repo_arg")"
 
 meta_json="$(load_host_meta_json "$repo_root" "$host")"
 assert_owner_recipients_ready "$host" "$meta_json"

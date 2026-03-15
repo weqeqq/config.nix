@@ -9,6 +9,7 @@ source "$script_dir/common.sh"
 
 host=""
 disk=""
+repo_arg=""
 assume_yes=0
 mount_point="/mnt"
 
@@ -20,6 +21,10 @@ while [[ "$#" -gt 0 ]]; do
       ;;
     --disk)
       disk="$2"
+      shift 2
+      ;;
+    --repo)
+      repo_arg="$2"
       shift 2
       ;;
     --yes)
@@ -36,16 +41,15 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-[[ -n "$host" ]] || die "usage: nix run .#install-host -- --host <name> --disk <device> [--yes]"
-[[ -n "$disk" ]] || die "usage: nix run .#install-host -- --host <name> --disk <device> [--yes]"
+[[ -n "$host" ]] || die "usage: nix run .#install-host -- --host <name> --disk <device> [--repo /path/to/checkout] [--yes]"
+[[ -n "$disk" ]] || die "usage: nix run .#install-host -- --host <name> --disk <device> [--repo /path/to/checkout] [--yes]"
 
 require_tools=(age-keygen disko jq mkpasswd nix sops nixos-generate-config nixos-install)
 for tool in "${require_tools[@]}"; do
   command -v "$tool" >/dev/null 2>&1 || die "required command not found: $tool"
 done
 
-repo_root="$(resolve_repo_root)"
-ensure_flake_repo "$repo_root"
+repo_root="$(prepare_repo_root "$repo_arg")"
 
 meta_json="$(load_host_meta_json "$repo_root" "$host")"
 assert_owner_recipients_ready "$host" "$meta_json"

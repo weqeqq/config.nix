@@ -60,11 +60,16 @@ age-keygen -y ~/.config/sops/age/keys.txt
 
 1. Boot the official NixOS minimal ISO in UEFI mode.
 2. Bring up networking.
-3. Clone this repository.
-4. Run the installer app:
+3. Run the installer app.
 
 ```bash
 nix --extra-experimental-features 'nix-command flakes' run .#install-host -- --host desktop --disk /dev/disk/by-id/YOUR-DISK
+```
+
+If you run the app from a remote flake reference instead of a local checkout, pass a target checkout path for generated files:
+
+```bash
+nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix#install-host -- --repo ./config.nix --host desktop --disk /dev/disk/by-id/YOUR-DISK
 ```
 
 For a VM install test, use the dedicated host:
@@ -75,6 +80,7 @@ nix --extra-experimental-features 'nix-command flakes' run .#install-host -- --h
 
 What the installer does:
 
+- bootstraps a writable repository checkout if you launch it from `github:...#install-host`;
 - wipes and partitions the disk with `disko`;
 - mounts the target filesystem under `/mnt`;
 - generates `hosts/<host>/hardware-configuration.nix`;
