@@ -2,7 +2,9 @@
 
 set -euo pipefail
 
-source "$(pwd -P)/scripts/common.sh"
+script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+# shellcheck source=./common.sh
+source "$script_dir/common.sh"
 
 host=""
 host_key_file=""
