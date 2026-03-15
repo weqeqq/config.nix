@@ -9,7 +9,7 @@ Single-flake NixOS + Home Manager repository for a desktop host with `NVIDIA`, `
 - `homeConfigurations."<user>@<host>"` for standalone Home Manager builds.
 - `disko` layout per host.
 - `sops-nix` integration with encrypted secrets stored in the same repository.
-- `nix run github:weqeqq/config.nix` for a fullscreen installer from the official minimal ISO.
+- `nix run github:weqeqq/config.nix` for a minimal fullscreen Go installer from the official minimal ISO.
 
 The current real hosts are:
 
@@ -67,16 +67,16 @@ age-keygen -y ~/.config/sops/age/keys.txt
 nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix
 ```
 
-The installer opens a full-screen `Textual` wizard. It is keyboard-first and keeps a persistent step rail, summary pane and log view.
+The installer opens a full-screen Go TUI. It is keyboard-first, centered, and intentionally minimal.
 
 Primary keys:
 
-- `Tab` and `Shift-Tab`: move focus
+- `Tab` and `Shift-Tab`: move focus between fields
 - arrow keys: navigate host and disk lists
 - `Enter`: continue
 - `Esc`: go back on non-destructive steps
 - `q`: quit before the install starts
-- `l`: toggle curated progress vs raw logs during install
+- `l`: toggle phases vs raw logs during install
 
 The wizard asks only for install-time inputs:
 
@@ -85,6 +85,8 @@ The wizard asks only for install-time inputs:
 - age key path only when an existing encrypted host secret cannot be decrypted automatically
 - initial password only when the host secret does not already decrypt
 - final destructive confirmation
+
+The default install screen shows only large phases. Raw command output is hidden unless you toggle it explicitly.
 
 What the installer does:
 

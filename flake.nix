@@ -153,10 +153,10 @@ source "$script_dir/common.sh"
               pkgs.alejandra
               inputs.disko.packages.${system}.disko
               pkgs.gitMinimal
+              pkgs.go
               pkgs.gnused
               pkgs.jq
               pkgs.nix
-              pkgs.python3Packages.textual
               pkgs.sops
               pkgs.ssh-to-age
               pkgs.whois
@@ -172,47 +172,32 @@ source "$script_dir/common.sh"
           diskoInstall = inputs.disko.packages.${system}.disko-install;
           installHostRuntimePath = lib.makeBinPath [
             pkgs.age
-            pkgs.bash
-            pkgs.coreutils
             diskoCli
-            pkgs.findutils
             pkgs.gitMinimal
-            pkgs.gnugrep
-            pkgs.gnused
             pkgs.gnutar
-            pkgs.jq
             pkgs.nix
             pkgs.nixos-install-tools
             pkgs.sops
             pkgs.util-linux
             pkgs.whois
           ];
-          installHostPackage = pkgs.python3Packages.buildPythonApplication {
+          installHostPackage = pkgs.buildGoModule {
             pname = "install-host";
             version = "0.1.0";
-            pyproject = true;
-            src = ./installer_tui;
-            build-system = [
-              pkgs.python3Packages.setuptools
+            src = ./installer;
+            subPackages = [
+              "cmd/install-host"
             ];
-            dependencies = [
-              pkgs.python3Packages.textual
-            ];
+            vendorHash = "sha256-0XcMt2lu+teI2M6VTI9ia7Wg38KTDGjEUd0cw6FwNd4=";
             nativeBuildInputs = [
               pkgs.makeWrapper
             ];
-            pythonImportsCheck = [
-              "config_nix_installer.app"
-              "config_nix_installer.backend"
-            ];
             postFixup = ''
-              for program in "$out/bin/install-host" "$out/bin/install-host-backend"; do
-                wrapProgram "$program" \
-                  --prefix PATH : "${installHostRuntimePath}" \
-                  --set CONFIG_NIX_BOOTSTRAP_REPO_URL ${lib.escapeShellArg bootstrapRepoUrl} \
-                  --set CONFIG_NIX_BOOTSTRAP_REV ${lib.escapeShellArg bootstrapRepoRev} \
-                  --set CONFIG_NIX_FLAKE_SOURCE ${lib.escapeShellArg self.outPath}
-              done
+              wrapProgram "$out/bin/install-host" \
+                --prefix PATH : "${installHostRuntimePath}" \
+                --set CONFIG_NIX_BOOTSTRAP_REPO_URL ${lib.escapeShellArg bootstrapRepoUrl} \
+                --set CONFIG_NIX_BOOTSTRAP_REV ${lib.escapeShellArg bootstrapRepoRev} \
+                --set CONFIG_NIX_FLAKE_SOURCE ${lib.escapeShellArg self.outPath}
             '';
           };
           finalizeHostPackage = pkgs.writeShellApplication {
