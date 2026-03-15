@@ -108,11 +108,12 @@ type Session struct {
 }
 
 type InstallRequest struct {
-	RepoRoot   string
-	Host       string
-	Disk       string
-	MountPoint string
-	AgeKeyFile string
-	SecretMode SecretMode
-	Password   string
+	RepoRoot     string
+	Host         string
+	Disk         string
+	MountPoint   string
+	AgeKeyFile   string
+	SecretMode   SecretMode
+	Password     string
+	LUKSPassword string
 }

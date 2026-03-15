@@ -21,6 +21,7 @@ const (
 	stepHost      step = "host"
 	stepDisk      step = "disk"
 	stepSecret    step = "secret"
+	stepLuks      step = "luks"
 	stepConfirm   step = "confirm"
 	stepInstall   step = "install"
 	stepComplete  step = "complete"
@@ -78,14 +79,17 @@ type model struct {
 
 	spinner spinner.Model
 
-	ageKeyInput   textinput.Model
-	passwordInput textinput.Model
-	confirmInput  textinput.Model
-	eraseInput    textinput.Model
+	ageKeyInput       textinput.Model
+	passwordInput     textinput.Model
+	confirmInput      textinput.Model
+	luksPasswordInput textinput.Model
+	luksConfirmInput  textinput.Model
+	eraseInput        textinput.Model
 
 	secretStatus installer.SecretStatus
 	secretChoice int
 	inputFocus   int
+	luksFocus    int
 	errorText    string
 
 	phaseStatus  map[installer.Phase]string
@@ -164,23 +168,35 @@ func newModel() model {
 	confirm.EchoMode = textinput.EchoPassword
 	confirm.EchoCharacter = '•'
 
+	luksPassword := textinput.New()
+	luksPassword.Placeholder = "cryptroot passphrase"
+	luksPassword.EchoMode = textinput.EchoPassword
+	luksPassword.EchoCharacter = '•'
+
+	luksConfirm := textinput.New()
+	luksConfirm.Placeholder = "confirm cryptroot passphrase"
+	luksConfirm.EchoMode = textinput.EchoPassword
+	luksConfirm.EchoCharacter = '•'
+
 	erase := textinput.New()
 	erase.Placeholder = "type erase"
 
 	vp := viewport.New(0, 0)
 
 	return model{
-		step:          stepBootstrap,
-		hostList:      hostList,
-		diskList:      diskList,
-		spinner:       spin,
-		ageKeyInput:   ageKey,
-		passwordInput: password,
-		confirmInput:  confirm,
-		eraseInput:    erase,
-		phaseStatus:   map[installer.Phase]string{},
-		phaseMessage:  map[installer.Phase]string{},
-		logViewport:   vp,
+		step:              stepBootstrap,
+		hostList:          hostList,
+		diskList:          diskList,
+		spinner:           spin,
+		ageKeyInput:       ageKey,
+		passwordInput:     password,
+		confirmInput:      confirm,
+		luksPasswordInput: luksPassword,
+		luksConfirmInput:  luksConfirm,
+		eraseInput:        erase,
+		phaseStatus:       map[installer.Phase]string{},
+		phaseMessage:      map[installer.Phase]string{},
+		logViewport:       vp,
 	}
 }
 
@@ -257,8 +273,19 @@ func (m *model) startSecretStep() tea.Cmd {
 	m.ageKeyInput.Reset()
 	m.passwordInput.Reset()
 	m.confirmInput.Reset()
+	m.luksPasswordInput.Reset()
+	m.luksConfirmInput.Reset()
+	m.luksFocus = 0
 	m.setError(nil)
 	return loadSecretCmd(m.session.RepoRoot, host.Host, "")
+}
+
+func (m *model) startLuksStep() {
+	m.step = stepLuks
+	m.luksFocus = 0
+	m.luksPasswordInput.Focus()
+	m.luksConfirmInput.Blur()
+	m.setError(nil)
 }
 
 func (m *model) startInstall() tea.Cmd {
@@ -271,13 +298,14 @@ func (m *model) startInstall() tea.Cmd {
 	m.phaseMessage = map[installer.Phase]string{}
 	m.logViewport.SetContent("")
 	request := installer.InstallRequest{
-		RepoRoot:   m.session.RepoRoot,
-		Host:       m.selectedHost().Host,
-		Disk:       m.selectedDisk().PreferredPath,
-		MountPoint: "/mnt",
-		AgeKeyFile: strings.TrimSpace(m.ageKeyInput.Value()),
-		SecretMode: m.currentSecretMode(),
-		Password:   m.passwordInput.Value(),
+		RepoRoot:     m.session.RepoRoot,
+		Host:         m.selectedHost().Host,
+		Disk:         m.selectedDisk().PreferredPath,
+		MountPoint:   "/mnt",
+		AgeKeyFile:   strings.TrimSpace(m.ageKeyInput.Value()),
+		SecretMode:   m.currentSecretMode(),
+		Password:     m.passwordInput.Value(),
+		LUKSPassword: m.luksPasswordInput.Value(),
 	}
 
 	m.installEvents = make(chan installer.Event)
@@ -456,8 +484,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			case stepSecret:
 				m.step = stepDisk
-			case stepConfirm:
+			case stepLuks:
 				m.step = stepSecret
+			case stepConfirm:
+				m.step = stepLuks
 			}
 			m.setError(nil)
 			return m, nil
@@ -476,6 +506,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.startSecretStep()
 			case stepSecret:
 				return m.handleSecretEnter()
+			case stepLuks:
+				return m.handleLuksEnter()
 			case stepConfirm:
 				if strings.TrimSpace(strings.ToLower(m.eraseInput.Value())) != "erase" {
 					m.setError(fmt.Errorf("type erase to continue"))
@@ -491,6 +523,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "tab", "shift+tab":
 			if m.step == stepSecret {
 				m.cycleSecretFocus(msg.String() == "shift+tab")
+				return m, nil
+			}
+			if m.step == stepLuks {
+				m.cycleLuksFocus(msg.String() == "shift+tab")
 				return m, nil
 			}
 		}
@@ -509,6 +545,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	if m.step == stepSecret {
 		cmds = append(cmds, m.updateSecretInputs(msg)...)
+	}
+	if m.step == stepLuks {
+		cmds = append(cmds, m.updateLuksInputs(msg)...)
 	}
 	if m.step == stepConfirm {
 		var cmd tea.Cmd
@@ -541,10 +580,7 @@ func (m *model) currentSecretMode() installer.SecretMode {
 func (m *model) handleSecretEnter() (tea.Model, tea.Cmd) {
 	switch m.secretStatus.Mode {
 	case installer.SecretModeReuse:
-		m.step = stepConfirm
-		m.eraseInput.Reset()
-		m.eraseInput.Focus()
-		m.setError(nil)
+		m.startLuksStep()
 		return m, nil
 	case installer.SecretModeCreate:
 		if m.passwordInput.Value() == "" {
@@ -555,10 +591,7 @@ func (m *model) handleSecretEnter() (tea.Model, tea.Cmd) {
 			m.setError(fmt.Errorf("passwords do not match"))
 			return m, nil
 		}
-		m.step = stepConfirm
-		m.eraseInput.Reset()
-		m.eraseInput.Focus()
-		m.setError(nil)
+		m.startLuksStep()
 		return m, nil
 	default:
 		if m.secretChoice == 0 {
@@ -579,12 +612,25 @@ func (m *model) handleSecretEnter() (tea.Model, tea.Cmd) {
 			m.setError(fmt.Errorf("passwords do not match"))
 			return m, nil
 		}
-		m.step = stepConfirm
-		m.eraseInput.Reset()
-		m.eraseInput.Focus()
-		m.setError(nil)
+		m.startLuksStep()
 		return m, nil
 	}
+}
+
+func (m *model) handleLuksEnter() (tea.Model, tea.Cmd) {
+	if m.luksPasswordInput.Value() == "" {
+		m.setError(fmt.Errorf("cryptroot passphrase cannot be empty"))
+		return m, nil
+	}
+	if m.luksPasswordInput.Value() != m.luksConfirmInput.Value() {
+		m.setError(fmt.Errorf("cryptroot passphrases do not match"))
+		return m, nil
+	}
+	m.step = stepConfirm
+	m.eraseInput.Reset()
+	m.eraseInput.Focus()
+	m.setError(nil)
+	return m, nil
 }
 
 func (m *model) cycleSecretFocus(reverse bool) {
@@ -596,6 +642,14 @@ func (m *model) cycleSecretFocus(reverse bool) {
 		m.inputFocus = (m.inputFocus + fields - 1) % fields
 	} else {
 		m.inputFocus = (m.inputFocus + 1) % fields
+	}
+}
+
+func (m *model) cycleLuksFocus(reverse bool) {
+	if reverse {
+		m.luksFocus = (m.luksFocus + 1) % 2
+	} else {
+		m.luksFocus = (m.luksFocus + 1) % 2
 	}
 }
 
@@ -654,12 +708,29 @@ func (m *model) updateSecretInputs(msg tea.Msg) []tea.Cmd {
 	return cmds
 }
 
+func (m *model) updateLuksInputs(msg tea.Msg) []tea.Cmd {
+	cmds := []tea.Cmd{}
+	if m.luksFocus == 0 {
+		m.luksPasswordInput.Focus()
+		m.luksConfirmInput.Blur()
+	} else {
+		m.luksPasswordInput.Blur()
+		m.luksConfirmInput.Focus()
+	}
+	var cmd tea.Cmd
+	m.luksPasswordInput, cmd = m.luksPasswordInput.Update(msg)
+	cmds = append(cmds, cmd)
+	m.luksConfirmInput, cmd = m.luksConfirmInput.Update(msg)
+	cmds = append(cmds, cmd)
+	return cmds
+}
+
 func (m model) visibleSteps() []step {
 	steps := []step{stepBootstrap}
 	if len(m.session.Hosts) > 1 {
 		steps = append(steps, stepHost)
 	}
-	steps = append(steps, stepDisk, stepSecret, stepConfirm, stepInstall, stepComplete)
+	steps = append(steps, stepDisk, stepSecret, stepLuks, stepConfirm, stepInstall, stepComplete)
 	return steps
 }
 
@@ -791,11 +862,25 @@ func (m model) renderConfirm() string {
 		theme.copy.Render("Disk: " + disk.PreferredPath),
 		theme.copy.Render("Install output: " + host.InitialOutput),
 		theme.copy.Render("Final output: " + host.FinalOutput),
+		theme.copy.Render("cryptroot: passphrase configured"),
 		"",
 		fieldLine("Type erase", m.eraseInput.View()),
 		m.renderError(),
 		"",
 		theme.muted.Render("Enter install  •  Esc back"),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) renderLuks() string {
+	lines := []string{
+		m.renderHeader("Encrypt disk", "Set the cryptroot passphrase. The machine will ask for it on boot."),
+		"",
+		fieldLine("Passphrase", m.luksPasswordInput.View()),
+		fieldLine("Confirm", m.luksConfirmInput.View()),
+		m.renderError(),
+		"",
+		theme.muted.Render("Enter continue  •  Tab switch field  •  Esc back"),
 	}
 	return strings.Join(lines, "\n")
 }
@@ -865,6 +950,8 @@ func (m model) View() string {
 		content = m.renderDisk()
 	case stepSecret:
 		content = m.renderSecret()
+	case stepLuks:
+		content = m.renderLuks()
 	case stepConfirm:
 		content = m.renderConfirm()
 	case stepInstall:

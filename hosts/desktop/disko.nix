@@ -1,4 +1,4 @@
-{ diskDevice ? "/dev/disk/by-id/REPLACE_ME", ... }:
+{ diskDevice ? "/dev/disk/by-id/REPLACE_ME", luksPasswordFile ? null, ... }:
 {
   disko.devices = {
     disk.main = {
@@ -25,6 +25,7 @@
             content = {
               type = "luks";
               name = "cryptroot";
+              passwordFile = luksPasswordFile;
               settings = {
                 allowDiscards = true;
               };

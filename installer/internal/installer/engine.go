@@ -72,6 +72,28 @@ func emit(sink func(Event), event Event) {
 	}
 }
 
+func diskoCommand(configPath string) []string {
+	return []string{
+		"disko",
+		"--mode", "destroy,format,mount",
+		"--yes-wipe-all-disks",
+		configPath,
+	}
+}
+
+func nixosInstallCommand(mountPoint, repoRoot, output string) []string {
+	return []string{
+		"nixos-install",
+		"--root", mountPoint,
+		"--flake", fmt.Sprintf("path:%s#%s", repoRoot, output),
+		"--no-root-passwd",
+	}
+}
+
+func renderDiskoConfig(hostDiskoPath, disk, luksPasswordFile string) string {
+	return fmt.Sprintf("(import %q {\n  diskDevice = %q;\n  luksPasswordFile = %q;\n})\n", hostDiskoPath, disk, luksPasswordFile)
+}
+
 func streamCommand(sink func(Event), phase Phase, env map[string]string, cmd []string) error {
 	command := exec.Command(cmd[0], cmd[1:]...)
 	command.Env = os.Environ()
@@ -259,6 +281,9 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 			return fmt.Errorf("password is required when creating or replacing the host secret")
 		}
 	}
+	if request.LUKSPassword == "" {
+		return fmt.Errorf("LUKS password is required")
+	}
 
 	tmpDir, err := os.MkdirTemp("/tmp", "config-nix-exec.")
 	if err != nil {
@@ -266,13 +291,18 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
+	luksPasswordFile := filepath.Join(tmpDir, "luks-password")
+	if err := os.WriteFile(luksPasswordFile, []byte(request.LUKSPassword), 0o600); err != nil {
+		return err
+	}
+
 	diskoConfigPath := filepath.Join(tmpDir, "disko-config.nix")
-	diskoConfig := fmt.Sprintf("(import %q {\n  diskDevice = %q;\n})\n", filepath.Join(repoRoot, "hosts", request.Host, "disko.nix"), disk)
+	diskoConfig := renderDiskoConfig(filepath.Join(repoRoot, "hosts", request.Host, "disko.nix"), disk, luksPasswordFile)
 	if err := os.WriteFile(diskoConfigPath, []byte(diskoConfig), 0o644); err != nil {
 		return err
 	}
 
-	emit(sink, Event{Kind: EventPhaseStart, Phase: PhasePrepare, Message: "Validating install plan and rendering the disko configuration"})
+	emit(sink, Event{Kind: EventPhaseStart, Phase: PhasePrepare, Message: "Validating install plan and rendering the encrypted disko configuration"})
 	if err := os.MkdirAll(request.MountPoint, 0o755); err != nil {
 		return err
 	}
@@ -283,7 +313,7 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 	for key, value := range env {
 		diskoEnv[key] = value
 	}
-	if err := streamCommand(sink, PhasePartition, diskoEnv, []string{"disko", "--mode", "destroy,format,mount", diskoConfigPath}); err != nil {
+	if err := streamCommand(sink, PhasePartition, diskoEnv, diskoCommand(diskoConfigPath)); err != nil {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhasePartition, Message: err.Error()})
 		return err
 	}
@@ -403,11 +433,7 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhasePersist, Message: "Persisted /etc/nixos and wrote install state files"})
 
 	emit(sink, Event{Kind: EventPhaseStart, Phase: PhaseInstall, Message: fmt.Sprintf("Installing NixOS output %s", plan.InitialOutput)})
-	if err := streamCommand(sink, PhaseInstall, env, []string{
-		"nixos-install",
-		"--root", request.MountPoint,
-		"--flake", fmt.Sprintf("path:%s#%s", targetRepoRoot, plan.InitialOutput),
-	}); err != nil {
+	if err := streamCommand(sink, PhaseInstall, env, nixosInstallCommand(request.MountPoint, targetRepoRoot, plan.InitialOutput)); err != nil {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseInstall, Message: err.Error()})
 		return err
 	}
