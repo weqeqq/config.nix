@@ -1,4 +1,4 @@
-{ diskDevice ? "/dev/disk/by-id/REPLACE_ME", luksPasswordFile ? null, ... }:
+{ diskDevice ? "/dev/disk/by-id/REPLACE_ME", passwordFile ? null, ... }:
 {
   disko.devices = {
     disk.main = {
@@ -25,7 +25,7 @@
             content = {
               type = "luks";
               name = "cryptroot";
-              inherit luksPasswordFile;
+              inherit passwordFile;
               settings = {
                 allowDiscards = true;
               };

@@ -52,7 +52,7 @@ func TestRenderDiskoConfigIncludesSharedDiskoAndPasswordFile(t *testing.T) {
 	for _, snippet := range []string{
 		`import "/repo/disko.nix"`,
 		`diskDevice = "/dev/vda";`,
-		`luksPasswordFile = "/tmp/luks-pass";`,
+		`passwordFile = "/tmp/luks-pass";`,
 	} {
 		if !strings.Contains(config, snippet) {
 			t.Fatalf("rendered config missing %q in %q", snippet, config)

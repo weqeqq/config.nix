@@ -109,7 +109,7 @@ func nixosInstallCommand(mountPoint, repoRoot, output string) []string {
 }
 
 func renderDiskoConfig(diskoPath, disk, luksPasswordFile string) string {
-	return fmt.Sprintf("(import %q {\n  diskDevice = %q;\n  luksPasswordFile = %q;\n})\n", diskoPath, disk, luksPasswordFile)
+	return fmt.Sprintf("(import %q {\n  diskDevice = %q;\n  passwordFile = %q;\n})\n", diskoPath, disk, luksPasswordFile)
 }
 
 func streamCommand(sink func(Event), phase Phase, env map[string]string, cmd []string) error {
