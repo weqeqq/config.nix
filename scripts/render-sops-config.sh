@@ -2,7 +2,11 @@
 
 set -euo pipefail
 
-export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG"$'\n'"}experimental-features = nix-command flakes"
+if [[ -n "${NIX_CONFIG:-}" ]]; then
+  export NIX_CONFIG="${NIX_CONFIG}"$'\n'"experimental-features = nix-command flakes"
+else
+  export NIX_CONFIG="experimental-features = nix-command flakes"
+fi
 
 repo_root="${1:-$(pwd -P)}"
 

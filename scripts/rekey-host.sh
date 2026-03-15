@@ -63,9 +63,9 @@ do
   fi
 
   if is_sops_file "$secret_file"; then
-    sops updatekeys -y "$secret_file"
+    sops_in_repo "$repo_root" updatekeys -y "$secret_file"
   else
-    sops --encrypt --in-place "$secret_file"
+    sops_in_repo "$repo_root" --encrypt --in-place "$secret_file"
   fi
 done
 

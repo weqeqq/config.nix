@@ -2,7 +2,17 @@
 
 set -euo pipefail
 
-export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG"$'\n'"}experimental-features = nix-command flakes"
+append_nix_config() {
+  local config_line="$1"
+
+  if [[ -n "${NIX_CONFIG:-}" ]]; then
+    export NIX_CONFIG="${NIX_CONFIG}"$'\n'"${config_line}"
+  else
+    export NIX_CONFIG="${config_line}"
+  fi
+}
+
+append_nix_config "experimental-features = nix-command flakes"
 
 die() {
   printf 'error: %s\n' "$*" >&2
@@ -135,6 +145,13 @@ is_sops_file() {
 render_sops_config() {
   local repo_root="$1"
   bash "$repo_root/scripts/render-sops-config.sh" "$repo_root"
+}
+
+sops_in_repo() {
+  local repo_root="$1"
+  shift
+
+  sops --config "$repo_root/.sops.yaml" "$@"
 }
 
 confirm_disk_wipe() {

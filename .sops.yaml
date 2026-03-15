@@ -2,12 +2,12 @@ creation_rules:
   - path_regex: ^secrets/common\.yaml$
     key_groups:
       - age:
-          - age1replacewithyourownagepublickeyxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          - age1f8yxh8nfxnxdhe0fnu2ym9nwnn38huyuc98s7m52vlsnjyfg9axqfs4ph7
   - path_regex: ^secrets/hosts/desktop\.yaml$
     key_groups:
       - age:
-          - age1replacewithyourownagepublickeyxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          - age1f8yxh8nfxnxdhe0fnu2ym9nwnn38huyuc98s7m52vlsnjyfg9axqfs4ph7
   - path_regex: ^secrets/hosts/vm-test\.yaml$
     key_groups:
       - age:
-          - age1replacewithyourownagepublickeyxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+          - age1f8yxh8nfxnxdhe0fnu2ym9nwnn38huyuc98s7m52vlsnjyfg9axqfs4ph7

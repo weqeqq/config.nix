@@ -114,17 +114,17 @@ if [[ ! -f "$host_secret_file" ]]; then
 userPasswordHash: "$password_hash"
 EOF
 
-  sops --encrypt --in-place "$host_secret_file"
+  sops_in_repo "$repo_root" --encrypt --in-place "$host_secret_file"
 else
   if is_sops_file "$host_secret_file"; then
-    sops updatekeys -y "$host_secret_file"
+    sops_in_repo "$repo_root" updatekeys -y "$host_secret_file"
   else
-    sops --encrypt --in-place "$host_secret_file"
+    sops_in_repo "$repo_root" --encrypt --in-place "$host_secret_file"
   fi
 fi
 
 if is_sops_file "$repo_root/secrets/common.yaml"; then
-  sops updatekeys -y "$repo_root/secrets/common.yaml"
+  sops_in_repo "$repo_root" updatekeys -y "$repo_root/secrets/common.yaml"
 fi
 
 nixos-install --root "$mount_point" --flake "$repo_root#${host}"
