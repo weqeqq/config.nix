@@ -1,8 +1,12 @@
-{ hostVars, ... }:
+{ lib, hostVars, hmIntegrated ? false, ... }:
 {
-  home.username = hostVars.user.name;
-  home.homeDirectory = "/home/${hostVars.user.name}";
-  home.stateVersion = hostVars.homeStateVersion;
+  home = {
+    stateVersion = hostVars.homeStateVersion;
+  }
+  // lib.optionalAttrs (!hmIntegrated) {
+    username = hostVars.user.name;
+    homeDirectory = "/home/${hostVars.user.name}";
+  };
 
   programs.home-manager.enable = true;
 }

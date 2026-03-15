@@ -10,6 +10,7 @@ inputs.home-manager.lib.homeManagerConfiguration {
 
   extraSpecialArgs = {
     inherit inputs hostName hostVars userName;
+    hmIntegrated = false;
   };
 
   modules = [

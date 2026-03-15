@@ -19,7 +19,10 @@ inputs.nixpkgs.lib.nixosSystem {
     inputs.home-manager.nixosModules.home-manager
     ../modules/nixos/base.nix
     ../modules/nixos/boot.nix
-    ../modules/nixos/users.nix
+    (import ../modules/nixos/users.nix {
+      lib = inputs.nixpkgs.lib;
+      inherit hostName hostVars;
+    })
     ../modules/nixos/nvidia.nix
     ../modules/nixos/qemu-guest.nix
     ../modules/nixos/hyprland.nix
@@ -32,8 +35,16 @@ inputs.nixpkgs.lib.nixosSystem {
         useUserPackages = true;
         extraSpecialArgs = {
           inherit inputs hostName hostVars userName;
+          hmIntegrated = true;
         };
-        users.${userName} = import homeModule;
+        users.${userName} = {
+          imports = [
+            ../modules/home/base.nix
+            ../modules/home/desktop.nix
+            ../modules/home/packages.nix
+            homeModule
+          ];
+        };
       };
     })
   ];

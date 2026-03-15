@@ -1,6 +1,7 @@
 { lib, hostName, ... }:
 let
   hostSecretFile = /. + "${toString ../../secrets/hosts}/${hostName}.yaml";
+  hasHostSecret = builtins.pathExists hostSecretFile;
 in
 {
   systemd.tmpfiles.rules = [
@@ -13,14 +14,14 @@ in
       generateKey = false;
     };
     defaultSopsFormat = "yaml";
-  };
-}
-// lib.optionalAttrs (builtins.pathExists hostSecretFile) {
-  sops.defaultSopsFile = hostSecretFile;
+  }
+  // lib.optionalAttrs hasHostSecret {
+    defaultSopsFile = hostSecretFile;
 
-  sops.secrets.user-password-hash = {
-    key = "userPasswordHash";
-    sopsFile = hostSecretFile;
-    neededForUsers = true;
+    secrets.user-password-hash = {
+      key = "userPasswordHash";
+      sopsFile = hostSecretFile;
+      neededForUsers = true;
+    };
   };
 }

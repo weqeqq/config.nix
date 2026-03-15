@@ -25,7 +25,7 @@ ensure_flake_repo() {
 load_host_meta_json() {
   local repo_root="$1"
   local host="$2"
-  nix --extra-experimental-features 'nix-command flakes' eval --json "$repo_root#hostMeta.${host}"
+  nix --extra-experimental-features 'nix-command flakes' eval --json "$repo_root#lib.hostMeta.${host}"
 }
 
 assert_owner_recipients_ready() {

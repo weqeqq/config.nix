@@ -68,7 +68,7 @@
       );
     in
     {
-      inherit hostMeta homeConfigurations nixosConfigurations;
+      inherit homeConfigurations nixosConfigurations;
 
       lib = {
         inherit hostMeta hostNames;

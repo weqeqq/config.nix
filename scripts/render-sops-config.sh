@@ -6,7 +6,7 @@ export NIX_CONFIG="${NIX_CONFIG:+$NIX_CONFIG"$'\n'"}experimental-features = nix-
 
 repo_root="${1:-$(pwd -P)}"
 
-host_meta_json="$(nix --extra-experimental-features 'nix-command flakes' eval --json "$repo_root#hostMeta")"
+host_meta_json="$(nix --extra-experimental-features 'nix-command flakes' eval --json "$repo_root#lib.hostMeta")"
 tmp_file="$(mktemp)"
 
 mapfile -t common_keys < <(
