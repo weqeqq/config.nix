@@ -1,11 +1,11 @@
-{ lib, hostVars, hmIntegrated ? false, ... }:
+{ lib, hmIntegrated ? false, sharedSettings, ... }:
 {
   home = {
-    stateVersion = hostVars.homeStateVersion;
+    stateVersion = sharedSettings.homeStateVersion;
   }
   // lib.optionalAttrs (!hmIntegrated) {
-    username = hostVars.user.name;
-    homeDirectory = "/home/${hostVars.user.name}";
+    username = sharedSettings.user.name;
+    homeDirectory = "/home/${sharedSettings.user.name}";
   };
 
   programs.home-manager.enable = true;

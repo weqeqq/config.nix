@@ -4,9 +4,9 @@ type Phase string
 
 const (
 	PhasePrepare   Phase = "prepare"
+	PhaseDetect    Phase = "detect"
 	PhasePartition Phase = "partition"
 	PhaseHardware  Phase = "hardware"
-	PhaseHostKey   Phase = "host-key"
 	PhaseSecrets   Phase = "secrets"
 	PhasePersist   Phase = "persist"
 	PhaseInstall   Phase = "install"
@@ -14,9 +14,9 @@ const (
 
 var PhaseOrder = []Phase{
 	PhasePrepare,
+	PhaseDetect,
 	PhasePartition,
 	PhaseHardware,
-	PhaseHostKey,
 	PhaseSecrets,
 	PhasePersist,
 	PhaseInstall,
@@ -50,7 +50,6 @@ type Event struct {
 }
 
 type InstallResult struct {
-	Host          string
 	Disk          string
 	InitialOutput string
 	FinalOutput   string
@@ -67,15 +66,66 @@ type Preflight struct {
 	RequiredTools map[string]bool
 }
 
-type HostRecord struct {
-	Host             string
-	User             string
-	HostName         string
-	InitialOutput    string
-	FinalOutput      string
-	NeedsFinalize    bool
-	DeferredFeatures []string
-	OwnerRecipients  []string
+type SharedSettings struct {
+	System             string `json:"system"`
+	HostNamePrefix     string `json:"hostNamePrefix"`
+	TimeZone           string `json:"timeZone"`
+	Locale             string `json:"locale"`
+	ConsoleKeyMap      string `json:"consoleKeyMap"`
+	SystemStateVersion string `json:"systemStateVersion"`
+	HomeStateVersion   string `json:"homeStateVersion"`
+	Graphics           struct {
+		NVIDIA struct {
+			Open bool `json:"open"`
+		} `json:"nvidia"`
+	} `json:"graphics"`
+	Boot struct {
+		SecureBoot struct {
+			Enable    bool   `json:"enable"`
+			PkiBundle string `json:"pkiBundle"`
+		} `json:"secureBoot"`
+	} `json:"boot"`
+	User struct {
+		Name        string   `json:"name"`
+		Description string   `json:"description"`
+		ExtraGroups []string `json:"extraGroups"`
+		OpenSSH     struct {
+			AuthorizedKeys []string `json:"authorizedKeys"`
+		} `json:"openssh"`
+	} `json:"user"`
+	OwnerAgeRecipients []string `json:"ownerAgeRecipients"`
+}
+
+type InstallPlan struct {
+	DeferredFeatures []string `json:"deferredFeatures"`
+	FinalOutput      string   `json:"finalOutput"`
+	InitialOutput    string   `json:"initialOutput"`
+	InstallOutput    string   `json:"installOutput"`
+	NeedsFinalize    bool     `json:"needsFinalize"`
+}
+
+type PlatformState struct {
+	Kind       string `json:"kind"`
+	Hypervisor string `json:"hypervisor"`
+}
+
+type GraphicsState struct {
+	Vendor      string   `json:"vendor"`
+	Enable32Bit bool     `json:"enable32Bit"`
+	PCIIDs      []string `json:"pciIds"`
+}
+
+type MachineState struct {
+	MachineID   string        `json:"machineId"`
+	HostName    string        `json:"hostName"`
+	InstalledAt string        `json:"installedAt"`
+	InstallDisk string        `json:"installDisk"`
+	Platform    PlatformState `json:"platform"`
+	Graphics    GraphicsState `json:"graphics"`
+}
+
+type RuntimeSecrets struct {
+	UserPasswordHash string `json:"userPasswordHash"`
 }
 
 type DiskRecord struct {
@@ -90,26 +140,26 @@ type DiskRecord struct {
 }
 
 type SecretStatus struct {
-	Host                string
 	Mode                SecretMode
 	Encrypted           bool
 	Decryptable         bool
 	HasSecret           bool
-	HostSecretPath      string
+	SecretPath          string
 	ActiveAgeKeyFile    string
 	SuggestedAgeKeyFile string
 }
 
 type Session struct {
-	Preflight Preflight
-	RepoRoot  string
-	Hosts     []HostRecord
-	Disks     []DiskRecord
+	Preflight   Preflight
+	RepoRoot    string
+	Disks       []DiskRecord
+	UserName    string
+	InstallPlan InstallPlan
+	Detected    MachineState
 }
 
 type InstallRequest struct {
 	RepoRoot     string
-	Host         string
 	Disk         string
 	MountPoint   string
 	AgeKeyFile   string

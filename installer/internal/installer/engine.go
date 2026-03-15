@@ -25,7 +25,23 @@ func LoadSession() (Session, func(), error) {
 		return Session{}, nil, err
 	}
 
-	hosts, err := loadHosts(repoRoot)
+	settings, err := loadSharedSettings(repoRoot)
+	if err != nil {
+		cleanup()
+		return Session{}, nil, err
+	}
+	if err := assertOwnerRecipientsReady(settings); err != nil {
+		cleanup()
+		return Session{}, nil, err
+	}
+
+	plan, err := loadInstallPlan(repoRoot)
+	if err != nil {
+		cleanup()
+		return Session{}, nil, err
+	}
+
+	detected, err := detectHardware("/")
 	if err != nil {
 		cleanup()
 		return Session{}, nil, err
@@ -33,7 +49,6 @@ func LoadSession() (Session, func(), error) {
 
 	requiredTools := map[string]bool{}
 	for _, tool := range []string{
-		"age-keygen",
 		"disko",
 		"findmnt",
 		"git",
@@ -57,13 +72,15 @@ func LoadSession() (Session, func(), error) {
 			SourceKind:    sourceKind,
 			RequiredTools: requiredTools,
 		},
-		Hosts: hosts,
-		Disks: disks,
+		Disks:       disks,
+		UserName:    settings.User.Name,
+		InstallPlan: plan,
+		Detected:    detected,
 	}, cleanup, nil
 }
 
-func SecretStatusFor(repoRoot, host, ageKeyFile string) (SecretStatus, error) {
-	return secretStatus(repoRoot, host, ageKeyFile)
+func SecretStatusFor(repoRoot, ageKeyFile string) (SecretStatus, error) {
+	return secretStatus(repoRoot, ageKeyFile)
 }
 
 func emit(sink func(Event), event Event) {
@@ -86,12 +103,13 @@ func nixosInstallCommand(mountPoint, repoRoot, output string) []string {
 		"nixos-install",
 		"--root", mountPoint,
 		"--flake", fmt.Sprintf("path:%s#%s", repoRoot, output),
+		"--impure",
 		"--no-root-passwd",
 	}
 }
 
-func renderDiskoConfig(hostDiskoPath, disk, luksPasswordFile string) string {
-	return fmt.Sprintf("(import %q {\n  diskDevice = %q;\n  luksPasswordFile = %q;\n})\n", hostDiskoPath, disk, luksPasswordFile)
+func renderDiskoConfig(diskoPath, disk, luksPasswordFile string) string {
+	return fmt.Sprintf("(import %q {\n  diskDevice = %q;\n  luksPasswordFile = %q;\n})\n", diskoPath, disk, luksPasswordFile)
 }
 
 func streamCommand(sink func(Event), phase Phase, env map[string]string, cmd []string) error {
@@ -178,12 +196,10 @@ func copyRepoSnapshot(repoRoot, targetRoot string) error {
 	return nil
 }
 
-func stageInstallArtifacts(repoRoot, host string) error {
+func stageInstallArtifacts(repoRoot string) error {
 	stagePaths := []string{
 		".sops.yaml",
-		filepath.Join("hosts", host, "hardware-configuration.nix"),
-		filepath.Join("secrets", "hosts", host+".age.pub"),
-		filepath.Join("secrets", "hosts", host+".yaml"),
+		filepath.Join("secrets", "user.yaml"),
 	}
 	if fileExists(filepath.Join(repoRoot, "secrets", "common.yaml")) {
 		stagePaths = append(stagePaths, filepath.Join("secrets", "common.yaml"))
@@ -204,16 +220,19 @@ func writeJSONFile(path string, payload any) error {
 	return os.WriteFile(path, content, 0o644)
 }
 
-func installReceiptPayload(host, disk, initialOutput, finalOutput, user string, needsFinalize bool) map[string]any {
+func installReceiptPayload(machineState MachineState, plan InstallPlan, user string) map[string]any {
 	return map[string]any{
-		"host":          host,
-		"disk":          disk,
-		"initialOutput": initialOutput,
-		"finalOutput":   finalOutput,
-		"repoPath":      "/etc/nixos",
-		"user":          user,
-		"installedAt":   time.Now().UTC().Format(time.RFC3339),
-		"needsFinalize": needsFinalize,
+		"installDisk":    machineState.InstallDisk,
+		"initialOutput":  plan.InitialOutput,
+		"finalOutput":    plan.FinalOutput,
+		"repoPath":       "/etc/nixos",
+		"user":           user,
+		"installedAt":    machineState.InstalledAt,
+		"needsFinalize":  plan.NeedsFinalize,
+		"machineId":      machineState.MachineID,
+		"hostName":       machineState.HostName,
+		"platformKind":   machineState.Platform.Kind,
+		"graphicsVendor": machineState.Graphics.Vendor,
 	}
 }
 
@@ -239,7 +258,6 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 		return fmt.Errorf("installer requires UEFI mode; /sys/firmware/efi is missing")
 	}
 	for _, tool := range []string{
-		"age-keygen",
 		"disko",
 		"findmnt",
 		"git",
@@ -256,18 +274,15 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 		}
 	}
 
-	metaMap, err := loadAllHostMeta(repoRoot)
+	settings, err := loadSharedSettings(repoRoot)
 	if err != nil {
 		return err
 	}
-	hostMeta, ok := metaMap[request.Host]
-	if !ok {
-		return fmt.Errorf("unknown host: %s", request.Host)
-	}
-	if err := assertOwnerRecipientsReady(request.Host, hostMeta); err != nil {
+	if err := assertOwnerRecipientsReady(settings); err != nil {
 		return err
 	}
-	plan, err := hostInstallPlan(repoRoot, request.Host)
+
+	plan, err := loadInstallPlan(repoRoot)
 	if err != nil {
 		return err
 	}
@@ -278,7 +293,7 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 	}
 	if request.SecretMode == SecretModeCreate || request.SecretMode == SecretModeReplace {
 		if request.Password == "" {
-			return fmt.Errorf("password is required when creating or replacing the host secret")
+			return fmt.Errorf("password is required when creating or replacing the shared user secret")
 		}
 	}
 	if request.LUKSPassword == "" {
@@ -296,19 +311,43 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 		return err
 	}
 
+	emit(sink, Event{Kind: EventPhaseStart, Phase: PhasePrepare, Message: "Validating shared settings and preparing local machine state"})
+	localDir := localStateDirForRepo(repoRoot)
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhasePrepare, Message: err.Error()})
+		return err
+	}
+	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhasePrepare, Message: fmt.Sprintf("Using target disk %s", disk)})
+
+	emit(sink, Event{Kind: EventPhaseStart, Phase: PhaseDetect, Message: "Detecting the current hardware profile"})
+	detected, err := detectHardware("/")
+	if err != nil {
+		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseDetect, Message: err.Error()})
+		return err
+	}
+	machineID, err := generateMachineID()
+	if err != nil {
+		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseDetect, Message: err.Error()})
+		return err
+	}
+	machineState := buildMachineState(settings, disk, detected, time.Now(), machineID)
+	if err := writeMachineStateFile(localDir, machineState); err != nil {
+		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseDetect, Message: err.Error()})
+		return err
+	}
+	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhaseDetect, Message: fmt.Sprintf("Detected %s graphics on %s", machineState.Graphics.Vendor, machineState.Platform.Kind)})
+
 	diskoConfigPath := filepath.Join(tmpDir, "disko-config.nix")
-	diskoConfig := renderDiskoConfig(filepath.Join(repoRoot, "hosts", request.Host, "disko.nix"), disk, luksPasswordFile)
+	diskoConfig := renderDiskoConfig(filepath.Join(repoRoot, "disko.nix"), disk, luksPasswordFile)
 	if err := os.WriteFile(diskoConfigPath, []byte(diskoConfig), 0o644); err != nil {
 		return err
 	}
 
-	emit(sink, Event{Kind: EventPhaseStart, Phase: PhasePrepare, Message: "Validating install plan and rendering the encrypted disko configuration"})
+	emit(sink, Event{Kind: EventPhaseStart, Phase: PhasePartition, Message: fmt.Sprintf("Partitioning and mounting %s", disk)})
 	if err := os.MkdirAll(request.MountPoint, 0o755); err != nil {
+		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhasePartition, Message: err.Error()})
 		return err
 	}
-	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhasePrepare, Message: fmt.Sprintf("Using host %s and target disk %s", request.Host, disk)})
-
-	emit(sink, Event{Kind: EventPhaseStart, Phase: PhasePartition, Message: fmt.Sprintf("Partitioning and mounting %s", disk)})
 	diskoEnv := map[string]string{"DISKO_ROOT_MOUNTPOINT": request.MountPoint}
 	for key, value := range env {
 		diskoEnv[key] = value
@@ -319,10 +358,7 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 	}
 	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhasePartition, Message: fmt.Sprintf("Mounted target filesystem at %s", request.MountPoint)})
 
-	hostDir := filepath.Join(repoRoot, "hosts", request.Host)
-	hostPubFile := filepath.Join(repoRoot, "secrets", "hosts", request.Host+".age.pub")
-
-	emit(sink, Event{Kind: EventPhaseStart, Phase: PhaseHardware, Message: "Generating hardware-configuration.nix"})
+	emit(sink, Event{Kind: EventPhaseStart, Phase: PhaseHardware, Message: "Generating local hardware-configuration.nix"})
 	hardware, err := requireOK([]string{
 		"nixos-generate-config",
 		"--root", request.MountPoint,
@@ -333,57 +369,36 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseHardware, Message: err.Error()})
 		return err
 	}
-	if err := os.WriteFile(filepath.Join(hostDir, "hardware-configuration.nix"), []byte(hardware), 0o644); err != nil {
+	if err := writeHardwareConfigFile(localDir, hardware); err != nil {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseHardware, Message: err.Error()})
 		return err
 	}
-	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhaseHardware, Message: fmt.Sprintf("Wrote hosts/%s/hardware-configuration.nix", request.Host)})
+	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhaseHardware, Message: "Wrote local/hardware-configuration.nix"})
 
-	emit(sink, Event{Kind: EventPhaseStart, Phase: PhaseHostKey, Message: "Creating the target host age key"})
-	hostKeyDir := filepath.Join(request.MountPoint, "var/lib/sops-nix")
-	if err := os.MkdirAll(hostKeyDir, 0o700); err != nil {
-		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseHostKey, Message: err.Error()})
-		return err
-	}
-	if _, err := requireOK([]string{"age-keygen", "-o", filepath.Join(hostKeyDir, "key.txt")}, nil, ""); err != nil {
-		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseHostKey, Message: err.Error()})
-		return err
-	}
-	if err := os.Chmod(filepath.Join(hostKeyDir, "key.txt"), 0o600); err != nil {
-		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseHostKey, Message: err.Error()})
-		return err
-	}
-	hostPub, err := requireOK([]string{"age-keygen", "-y", filepath.Join(hostKeyDir, "key.txt")}, nil, "")
-	if err != nil {
-		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseHostKey, Message: err.Error()})
-		return err
-	}
-	if err := os.MkdirAll(filepath.Dir(hostPubFile), 0o755); err != nil {
-		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseHostKey, Message: err.Error()})
-		return err
-	}
-	if err := os.WriteFile(hostPubFile, []byte(strings.TrimSpace(hostPub)+"\n"), 0o644); err != nil {
-		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseHostKey, Message: err.Error()})
-		return err
-	}
-	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhaseHostKey, Message: fmt.Sprintf("Wrote secrets/hosts/%s.age.pub", request.Host)})
-
-	emit(sink, Event{Kind: EventPhaseStart, Phase: PhaseSecrets, Message: "Rendering sops rules and preparing host secrets"})
+	emit(sink, Event{Kind: EventPhaseStart, Phase: PhaseSecrets, Message: "Preparing shared secrets and local runtime secrets"})
 	if err := renderSopsConfig(repoRoot); err != nil {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseSecrets, Message: err.Error()})
 		return err
 	}
-	if err := writeHostSecret(repoRoot, request.Host, request.SecretMode, request.Password, env); err != nil {
+	if err := writeUserSecret(repoRoot, request.SecretMode, request.Password, env); err != nil {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseSecrets, Message: err.Error()})
 		return err
 	}
-	commonSecret := filepath.Join(repoRoot, "secrets", "common.yaml")
-	if isSopsFile(commonSecret) {
+	userPasswordHash, err := readUserPasswordHash(repoRoot, env)
+	if err != nil {
+		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseSecrets, Message: err.Error()})
+		return err
+	}
+	if err := writeRuntimeSecretsFile(localDir, userPasswordHash); err != nil {
+		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseSecrets, Message: err.Error()})
+		return err
+	}
+	if fileExists(filepath.Join(repoRoot, "secrets", "common.yaml")) && isSopsFile(filepath.Join(repoRoot, "secrets", "common.yaml")) {
 		if _, err := requireOK([]string{
 			"sops",
 			"--config", filepath.Join(repoRoot, ".sops.yaml"),
 			"updatekeys", "-y",
-			commonSecret,
+			filepath.Join(repoRoot, "secrets", "common.yaml"),
 		}, env, ""); err != nil {
 			emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseSecrets, Message: err.Error()})
 			return err
@@ -394,13 +409,13 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseSecrets, Message: err.Error()})
 		return err
 	}
-	if err := stageInstallArtifacts(repoRoot, request.Host); err != nil {
+	if err := stageInstallArtifacts(repoRoot); err != nil {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseSecrets, Message: err.Error()})
 		return err
 	}
-	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhaseSecrets, Message: fmt.Sprintf("Staged generated files for %s", request.Host)})
+	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhaseSecrets, Message: "Shared secrets prepared and local runtime state written"})
 
-	emit(sink, Event{Kind: EventPhaseStart, Phase: PhasePersist, Message: "Copying the full git checkout into /etc/nixos"})
+	emit(sink, Event{Kind: EventPhaseStart, Phase: PhasePersist, Message: "Copying the repo and local machine state into /etc/nixos"})
 	targetRepoRoot := filepath.Join(request.MountPoint, "etc/nixos")
 	if err := copyRepoSnapshot(repoRoot, targetRepoRoot); err != nil {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhasePersist, Message: err.Error()})
@@ -412,7 +427,7 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhasePersist, Message: err.Error()})
 		return err
 	}
-	if err := writeJSONFile(filepath.Join(stateDir, "install-receipt.json"), installReceiptPayload(request.Host, disk, plan.InitialOutput, plan.FinalOutput, hostMeta.User.Name, plan.NeedsFinalize)); err != nil {
+	if err := writeJSONFile(filepath.Join(stateDir, "install-receipt.json"), installReceiptPayload(machineState, plan, settings.User.Name)); err != nil {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhasePersist, Message: err.Error()})
 		return err
 	}
@@ -422,18 +437,22 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 			return err
 		}
 		if err := writeJSONFile(filepath.Join(stateDir, "finalize-status.json"), map[string]any{
-			"host":      request.Host,
 			"status":    "pending",
+			"stage":     "waiting-first-boot",
 			"updatedAt": time.Now().UTC().Format(time.RFC3339),
 		}); err != nil {
 			emit(sink, Event{Kind: EventPhaseFailed, Phase: PhasePersist, Message: err.Error()})
 			return err
 		}
 	}
-	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhasePersist, Message: "Persisted /etc/nixos and wrote install state files"})
+	emit(sink, Event{Kind: EventPhaseComplete, Phase: PhasePersist, Message: "Persisted /etc/nixos and local install state"})
 
 	emit(sink, Event{Kind: EventPhaseStart, Phase: PhaseInstall, Message: fmt.Sprintf("Installing NixOS output %s", plan.InitialOutput)})
-	if err := streamCommand(sink, PhaseInstall, env, nixosInstallCommand(request.MountPoint, targetRepoRoot, plan.InitialOutput)); err != nil {
+	installEnv := localStateEnv(targetRepoRoot)
+	for key, value := range env {
+		installEnv[key] = value
+	}
+	if err := streamCommand(sink, PhaseInstall, installEnv, nixosInstallCommand(request.MountPoint, targetRepoRoot, plan.InitialOutput)); err != nil {
 		emit(sink, Event{Kind: EventPhaseFailed, Phase: PhaseInstall, Message: err.Error()})
 		return err
 	}
@@ -443,7 +462,6 @@ func RunInstall(request InstallRequest, sink func(Event)) error {
 		Phase:   PhaseInstall,
 		Message: "Installation completed successfully",
 		InstallResult: &InstallResult{
-			Host:          request.Host,
 			Disk:          disk,
 			InitialOutput: plan.InitialOutput,
 			FinalOutput:   plan.FinalOutput,

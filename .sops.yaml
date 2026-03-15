@@ -3,11 +3,7 @@ creation_rules:
     key_groups:
       - age:
           - age1f8yxh8nfxnxdhe0fnu2ym9nwnn38huyuc98s7m52vlsnjyfg9axqfs4ph7
-  - path_regex: ^secrets/hosts/desktop\.yaml$
-    key_groups:
-      - age:
-          - age1f8yxh8nfxnxdhe0fnu2ym9nwnn38huyuc98s7m52vlsnjyfg9axqfs4ph7
-  - path_regex: ^secrets/hosts/vm-test\.yaml$
+  - path_regex: ^secrets/user\.yaml$
     key_groups:
       - age:
           - age1f8yxh8nfxnxdhe0fnu2ym9nwnn38huyuc98s7m52vlsnjyfg9axqfs4ph7

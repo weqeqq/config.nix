@@ -1,9 +1,11 @@
-{ config, lib, pkgs, hostInstallPlan, hostName, phase, ... }:
+{ config, inputs, lib, pkgs, phase, ... }:
 let
+  installPlan = config.configNix.installPlan;
   repoPath = "/etc/nixos";
   stateDir = "/var/lib/config-nix";
   finalizeMarker = "${stateDir}/finalize-pending";
-  runFinalize = phase == "install" && hostInstallPlan.needsFinalize;
+  finalizeTool = "${inputs.self.packages.${pkgs.system}.config-nix-tools}/bin/finalize-system";
+  runFinalize = phase == "install" && installPlan.needsFinalize;
 in
 {
   systemd.tmpfiles.rules = [
@@ -17,31 +19,14 @@ in
     before = [ "greetd.service" "display-manager.service" ];
     unitConfig.ConditionPathExists = finalizeMarker;
 
-    path = with pkgs; [
-      coreutils
-      findutils
-      gnugrep
-      gnused
-      jq
-      nix
-      sbctl
-      systemd
-      util-linux
-    ];
-
     serviceConfig = {
+      Environment = [ "CONFIG_NIX_LOCAL_STATE_DIR=${repoPath}/local" ];
+      ExecStart = "${finalizeTool} --repo ${lib.escapeShellArg repoPath} --marker-path ${lib.escapeShellArg finalizeMarker}";
       Type = "oneshot";
       TimeoutStartSec = "30min";
       StandardOutput = "journal+console";
       StandardError = "journal+console";
     };
-
-    script = ''
-      exec ${pkgs.bash}/bin/bash ${repoPath}/scripts/finalize-host.sh \
-        --host ${lib.escapeShellArg hostName} \
-        --repo ${lib.escapeShellArg repoPath} \
-        --marker-path ${lib.escapeShellArg finalizeMarker}
-    '';
   };
 
   systemd.services.greetd = lib.mkIf (runFinalize && config.services.greetd.enable) {

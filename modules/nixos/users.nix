@@ -1,9 +1,8 @@
-{ lib, hostName, hostVars, ... }:
+{ lib, runtimeSecrets, sharedSettings, ... }:
 let
-  userName = hostVars.user.name;
-  hostSecretFile = ../../secrets/hosts + "/${hostName}.yaml";
-  hasPasswordSecret = builtins.pathExists hostSecretFile;
-  sshKeys = hostVars.user.openssh.authorizedKeys;
+  userName = sharedSettings.user.name;
+  sshKeys = sharedSettings.user.openssh.authorizedKeys;
+  passwordHash = runtimeSecrets.userPasswordHash or null;
 in
 {
   users.mutableUsers = false;
@@ -16,14 +15,14 @@ in
   users.users.${userName} =
     {
       isNormalUser = true;
-      description = hostVars.user.description;
-      extraGroups = lib.unique ([ "wheel" "networkmanager" ] ++ hostVars.user.extraGroups);
+      description = sharedSettings.user.description;
+      extraGroups = lib.unique ([ "wheel" "networkmanager" ] ++ sharedSettings.user.extraGroups);
       openssh.authorizedKeys.keys = sshKeys;
     }
-    // lib.optionalAttrs hasPasswordSecret {
-      hashedPasswordFile = "/run/secrets-for-users/user-password-hash";
+    // lib.optionalAttrs (passwordHash != null) {
+      hashedPassword = passwordHash;
     }
-    // lib.optionalAttrs (!hasPasswordSecret) {
+    // lib.optionalAttrs (passwordHash == null) {
       hashedPassword = "!";
     };
 }

@@ -1,13 +1,9 @@
-{ lib, hostName, ... }:
+{ lib, ... }:
 let
-  hostSecretFile = /. + "${toString ../../secrets/hosts}/${hostName}.yaml";
-  hasHostSecret = builtins.pathExists hostSecretFile;
+  commonSecretFile = ../../secrets/common.yaml;
+  hasCommonSecret = builtins.pathExists commonSecretFile;
 in
 {
-  systemd.tmpfiles.rules = [
-    "d /var/lib/sops-nix 0700 root root -"
-  ];
-
   sops = {
     age = {
       keyFile = "/var/lib/sops-nix/key.txt";
@@ -15,13 +11,11 @@ in
     };
     defaultSopsFormat = "yaml";
   }
-  // lib.optionalAttrs hasHostSecret {
-    defaultSopsFile = hostSecretFile;
-
-    secrets.user-password-hash = {
-      key = "userPasswordHash";
-      sopsFile = hostSecretFile;
-      neededForUsers = true;
-    };
+  // lib.optionalAttrs hasCommonSecret {
+    defaultSopsFile = commonSecretFile;
   };
+
+  systemd.tmpfiles.rules = [
+    "d /var/lib/sops-nix 0700 root root -"
+  ];
 }

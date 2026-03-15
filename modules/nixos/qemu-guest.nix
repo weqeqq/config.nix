@@ -1,6 +1,6 @@
-{ lib, hostVars, pkgs, ... }:
+{ lib, machineState, pkgs, ... }:
 let
-  qemuGuestEnabled = (hostVars.virtualization or { }).qemuGuest or false;
+  qemuGuestEnabled = ((machineState.platform or { }).kind or "bare-metal") == "vm";
 in
 lib.mkIf qemuGuestEnabled {
   boot.initrd.availableKernelModules = [

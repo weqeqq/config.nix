@@ -1,10 +1,10 @@
 { lib }:
-{ hostName, hostVars }:
+sharedSettings:
 let
-  secureBootEnabled = (((hostVars.boot or { }).secureBoot or { }).enable or false);
+  secureBootEnabled = (((sharedSettings.boot or { }).secureBoot or { }).enable or false);
   deferredFeatures = lib.optionals secureBootEnabled [ "secure-boot" ];
-  installOutput = "${hostName}-install";
-  finalOutput = hostName;
+  installOutput = "default-install";
+  finalOutput = "default";
   needsFinalize = deferredFeatures != [ ];
 in
 {

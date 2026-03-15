@@ -25,8 +25,10 @@
             content = {
               type = "luks";
               name = "cryptroot";
-              passwordFile = luksPasswordFile;
-              settings.allowDiscards = true;
+              inherit luksPasswordFile;
+              settings = {
+                allowDiscards = true;
+              };
               content = {
                 type = "btrfs";
                 extraArgs = [ "-f" ];

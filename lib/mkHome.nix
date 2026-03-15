@@ -1,15 +1,22 @@
-{ inputs, hostMeta }:
-{ hostName, system }:
-let
-  hostVars = hostMeta.${hostName};
-  userName = hostVars.user.name;
-  homeModule = ../homes + "/${userName}";
-in
+{ inputs, sharedSettings }:
+{ system }:
 inputs.home-manager.lib.homeManagerConfiguration {
   pkgs = inputs.nixpkgs.legacyPackages.${system};
 
   extraSpecialArgs = {
-    inherit inputs hostName hostVars userName;
+    inherit inputs sharedSettings;
+    machineState = {
+      platform = {
+        kind = "bare-metal";
+        hypervisor = "none";
+      };
+      graphics = {
+        vendor = "generic";
+        enable32Bit = false;
+        pciIds = [ ];
+      };
+    };
+    runtimeSecrets = { };
     hmIntegrated = false;
   };
 
@@ -17,6 +24,7 @@ inputs.home-manager.lib.homeManagerConfiguration {
     ../modules/home/base.nix
     ../modules/home/desktop.nix
     ../modules/home/packages.nix
-    homeModule
+    ../home/default.nix
+    ../home/packages.nix
   ];
 }

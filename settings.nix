@@ -1,6 +1,6 @@
 {
-  hostName = "vm-test";
   system = "x86_64-linux";
+  hostNamePrefix = "nixos";
   timeZone = "Europe/Moscow";
   locale = "en_US.UTF-8";
   consoleKeyMap = "us";
@@ -8,19 +8,13 @@
   homeStateVersion = "25.11";
 
   graphics = {
-    enable32Bit = false;
-    nvidia = {
-      enable = false;
-      open = false;
-    };
+    nvidia.open = false;
   };
 
   boot.secureBoot = {
     enable = false;
     pkiBundle = "/var/lib/sbctl";
   };
-
-  virtualization.qemuGuest = true;
 
   user = {
     name = "weqeq";

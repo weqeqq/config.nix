@@ -54,21 +54,21 @@ func isSopsFile(path string) bool {
 	return false
 }
 
+func sharedUserSecretPath(repoRoot string) string {
+	return filepath.Join(repoRoot, "secrets", "user.yaml")
+}
+
 func sopsCanDecrypt(repoRoot, secretFile string, env map[string]string) bool {
 	_, _, err := run([]string{"sops", "--config", filepath.Join(repoRoot, ".sops.yaml"), "--decrypt", secretFile}, env, "")
 	return err == nil
 }
 
-func secretStatus(repoRoot, host, ageKeyFile string) (SecretStatus, error) {
-	meta, err := loadAllHostMeta(repoRoot)
+func secretStatus(repoRoot, ageKeyFile string) (SecretStatus, error) {
+	settings, err := loadSharedSettings(repoRoot)
 	if err != nil {
 		return SecretStatus{}, err
 	}
-	hostMeta, ok := meta[host]
-	if !ok {
-		return SecretStatus{}, fmt.Errorf("unknown host: %s", host)
-	}
-	if err := assertOwnerRecipientsReady(host, hostMeta); err != nil {
+	if err := assertOwnerRecipientsReady(settings); err != nil {
 		return SecretStatus{}, err
 	}
 
@@ -76,10 +76,9 @@ func secretStatus(repoRoot, host, ageKeyFile string) (SecretStatus, error) {
 	if err != nil {
 		return SecretStatus{}, err
 	}
-	secretFile := filepath.Join(repoRoot, "secrets", "hosts", host+".yaml")
+	secretFile := sharedUserSecretPath(repoRoot)
 	status := SecretStatus{
-		Host:                host,
-		HostSecretPath:      secretFile,
+		SecretPath:          secretFile,
 		ActiveAgeKeyFile:    env["SOPS_AGE_KEY_FILE"],
 		SuggestedAgeKeyFile: defaultAgeKeyFile(),
 	}
@@ -109,44 +108,24 @@ func secretStatus(repoRoot, host, ageKeyFile string) (SecretStatus, error) {
 }
 
 func renderSopsConfig(repoRoot string) error {
-	meta, err := loadAllHostMeta(repoRoot)
+	settings, err := loadSharedSettings(repoRoot)
 	if err != nil {
 		return err
 	}
 
-	hostNames := make([]string, 0, len(meta))
-	commonKeys := make([]string, 0)
-	for host, hostMeta := range meta {
-		hostNames = append(hostNames, host)
-		commonKeys = append(commonKeys, hostMeta.OwnerAgeRecipients...)
-	}
-	sort.Strings(hostNames)
-	commonKeys = uniqueSorted(commonKeys)
-
+	keys := uniqueSorted(settings.OwnerAgeRecipients)
 	var builder strings.Builder
 	builder.WriteString("creation_rules:\n")
-	if len(commonKeys) > 0 {
-		builder.WriteString("  - path_regex: ^secrets/common\\.yaml$\n")
-		builder.WriteString("    key_groups:\n")
-		builder.WriteString("      - age:\n")
-		for _, key := range commonKeys {
-			builder.WriteString("          - " + key + "\n")
-		}
+	if len(keys) == 0 {
+		builder.WriteString("  []\n")
+		return os.WriteFile(filepath.Join(repoRoot, ".sops.yaml"), []byte(builder.String()), 0o644)
 	}
 
-	for _, host := range hostNames {
-		keys := append([]string(nil), meta[host].OwnerAgeRecipients...)
-		hostPubFile := filepath.Join(repoRoot, "secrets", "hosts", host+".age.pub")
-		if fileExists(hostPubFile) {
-			if content, err := os.ReadFile(hostPubFile); err == nil {
-				keys = append(keys, strings.TrimSpace(string(content)))
-			}
-		}
-		keys = uniqueSorted(keys)
-		if len(keys) == 0 {
-			continue
-		}
-		builder.WriteString(fmt.Sprintf("  - path_regex: ^secrets/hosts/%s\\.yaml$\n", host))
+	for _, pathRegex := range []string{
+		"^secrets/common\\.yaml$",
+		"^secrets/user\\.yaml$",
+	} {
+		builder.WriteString("  - path_regex: " + pathRegex + "\n")
 		builder.WriteString("    key_groups:\n")
 		builder.WriteString("      - age:\n")
 		for _, key := range keys {
@@ -175,23 +154,23 @@ func uniqueSorted(values []string) []string {
 	return result
 }
 
-func writeHostSecret(repoRoot, host string, mode SecretMode, password string, env map[string]string) error {
-	hostSecretFile := filepath.Join(repoRoot, "secrets", "hosts", host+".yaml")
-	if err := os.MkdirAll(filepath.Dir(hostSecretFile), 0o755); err != nil {
+func writeUserSecret(repoRoot string, mode SecretMode, password string, env map[string]string) error {
+	secretFile := sharedUserSecretPath(repoRoot)
+	if err := os.MkdirAll(filepath.Dir(secretFile), 0o755); err != nil {
 		return err
 	}
 
 	switch mode {
 	case SecretModeCreate, SecretModeReplace:
 		if password == "" {
-			return fmt.Errorf("password is required when creating or replacing the host secret")
+			return fmt.Errorf("password is required when creating or replacing the shared user secret")
 		}
 		hashed, err := requireOK([]string{"mkpasswd", "--method=yescrypt", "--stdin"}, nil, password+"\n")
 		if err != nil {
 			return err
 		}
 		content := fmt.Sprintf("userPasswordHash: %q\n", strings.TrimSpace(hashed))
-		if err := os.WriteFile(hostSecretFile, []byte(content), 0o644); err != nil {
+		if err := os.WriteFile(secretFile, []byte(content), 0o644); err != nil {
 			return err
 		}
 		_, err = requireOK([]string{
@@ -199,27 +178,28 @@ func writeHostSecret(repoRoot, host string, mode SecretMode, password string, en
 			"--config", filepath.Join(repoRoot, ".sops.yaml"),
 			"--encrypt",
 			"--in-place",
-			hostSecretFile,
+			secretFile,
 		}, env, "")
 		return err
 	case SecretModeReuse:
-		if !fileExists(hostSecretFile) {
-			return fmt.Errorf("expected existing host secret at %s", hostSecretFile)
+		if !fileExists(secretFile) {
+			return fmt.Errorf("expected existing shared user secret at %s", secretFile)
 		}
-		if isSopsFile(hostSecretFile) {
+		if isSopsFile(secretFile) {
 			_, err := requireOK([]string{
 				"sops",
 				"--config", filepath.Join(repoRoot, ".sops.yaml"),
 				"updatekeys", "-y",
-				hostSecretFile,
+				secretFile,
 			}, env, "")
 			return err
 		}
 		_, err := requireOK([]string{
 			"sops",
 			"--config", filepath.Join(repoRoot, ".sops.yaml"),
-			"--encrypt", "--in-place",
-			hostSecretFile,
+			"--encrypt",
+			"--in-place",
+			secretFile,
 		}, env, "")
 		return err
 	default:
@@ -227,7 +207,114 @@ func writeHostSecret(repoRoot, host string, mode SecretMode, password string, en
 	}
 }
 
+func parseUserPasswordHash(content string) (string, error) {
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "userPasswordHash:") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, "userPasswordHash:"))
+		value = strings.Trim(value, "\"")
+		if value == "" {
+			return "", fmt.Errorf("userPasswordHash is empty")
+		}
+		return value, nil
+	}
+	return "", fmt.Errorf("userPasswordHash key not found")
+}
+
+func readUserPasswordHash(repoRoot string, env map[string]string) (string, error) {
+	secretFile := sharedUserSecretPath(repoRoot)
+	if !fileExists(secretFile) {
+		return "", fmt.Errorf("shared user secret not found: %s", secretFile)
+	}
+
+	if isSopsFile(secretFile) {
+		decrypted, err := requireOK([]string{
+			"sops",
+			"--config", filepath.Join(repoRoot, ".sops.yaml"),
+			"--decrypt",
+			secretFile,
+		}, env, "")
+		if err != nil {
+			return "", err
+		}
+		return parseUserPasswordHash(decrypted)
+	}
+
+	content, err := os.ReadFile(secretFile)
+	if err != nil {
+		return "", err
+	}
+	return parseUserPasswordHash(string(content))
+}
+
+func writeRuntimeSecretsFile(localDir, passwordHash string) error {
+	content := fmt.Sprintf("{\n  userPasswordHash = %q;\n}\n", passwordHash)
+	if err := os.MkdirAll(localDir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(localDir, "runtime-secrets.nix"), []byte(content), 0o600)
+}
+
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+func RekeySharedSecrets(repoRoot, ageKeyFile string) error {
+	repoRoot, err := normalizeRepoRoot(repoRoot)
+	if err != nil {
+		return err
+	}
+	if err := ensureFlakeRepo(repoRoot); err != nil {
+		return err
+	}
+
+	settings, err := loadSharedSettings(repoRoot)
+	if err != nil {
+		return err
+	}
+	if err := assertOwnerRecipientsReady(settings); err != nil {
+		return err
+	}
+
+	env, err := prepareSopsEnv(ageKeyFile)
+	if err != nil {
+		return err
+	}
+	if err := renderSopsConfig(repoRoot); err != nil {
+		return err
+	}
+
+	for _, secretFile := range []string{
+		filepath.Join(repoRoot, "secrets", "common.yaml"),
+		sharedUserSecretPath(repoRoot),
+	} {
+		if !fileExists(secretFile) {
+			continue
+		}
+		if isSopsFile(secretFile) {
+			if _, err := requireOK([]string{
+				"sops",
+				"--config", filepath.Join(repoRoot, ".sops.yaml"),
+				"updatekeys", "-y",
+				secretFile,
+			}, env, ""); err != nil {
+				return err
+			}
+			continue
+		}
+		if _, err := requireOK([]string{
+			"sops",
+			"--config", filepath.Join(repoRoot, ".sops.yaml"),
+			"--encrypt",
+			"--in-place",
+			secretFile,
+		}, env, ""); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }

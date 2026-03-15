@@ -1,6 +1,6 @@
-{ lib, hostVars, phase, ... }:
+{ lib, phase, sharedSettings, ... }:
 let
-  secureBoot = (hostVars.boot or { }).secureBoot or { };
+  secureBoot = (sharedSettings.boot or { }).secureBoot or { };
   secureBootEnabled = secureBoot.enable or false;
   pkiBundle = secureBoot.pkiBundle or "/var/lib/sbctl";
 in

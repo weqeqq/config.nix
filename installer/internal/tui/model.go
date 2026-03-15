@@ -18,7 +18,6 @@ type step string
 
 const (
 	stepBootstrap step = "bootstrap"
-	stepHost      step = "host"
 	stepDisk      step = "disk"
 	stepSecret    step = "secret"
 	stepLuks      step = "luks"
@@ -26,18 +25,6 @@ const (
 	stepInstall   step = "install"
 	stepComplete  step = "complete"
 )
-
-type hostItem struct{ record installer.HostRecord }
-
-func (i hostItem) FilterValue() string { return i.record.Host }
-func (i hostItem) Title() string       { return i.record.Host }
-func (i hostItem) Description() string {
-	mode := "Direct install"
-	if i.record.NeedsFinalize {
-		mode = "Finalize after first boot"
-	}
-	return fmt.Sprintf("%s  |  %s", i.record.User, mode)
-}
 
 type diskItem struct{ record installer.DiskRecord }
 
@@ -74,10 +61,8 @@ type model struct {
 	session installer.Session
 	cleanup func()
 
-	hostList list.Model
 	diskList list.Model
-
-	spinner spinner.Model
+	spinner  spinner.Model
 
 	ageKeyInput       textinput.Model
 	passwordInput     textinput.Model
@@ -140,13 +125,6 @@ func newModel() model {
 	spin.Spinner = spinner.Dot
 	spin.Style = theme.accent
 
-	hostList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
-	hostList.SetShowStatusBar(false)
-	hostList.SetFilteringEnabled(false)
-	hostList.SetShowHelp(false)
-	hostList.DisableQuitKeybindings()
-	hostList.Title = "Host"
-
 	diskList := list.New(nil, list.NewDefaultDelegate(), 0, 0)
 	diskList.SetShowStatusBar(false)
 	diskList.SetFilteringEnabled(false)
@@ -185,7 +163,6 @@ func newModel() model {
 
 	return model{
 		step:              stepBootstrap,
-		hostList:          hostList,
 		diskList:          diskList,
 		spinner:           spin,
 		ageKeyInput:       ageKey,
@@ -215,9 +192,9 @@ func loadSessionCmd() tea.Cmd {
 	}
 }
 
-func loadSecretCmd(repoRoot, host, ageKey string) tea.Cmd {
+func loadSecretCmd(repoRoot, ageKey string) tea.Cmd {
 	return func() tea.Msg {
-		status, err := installer.SecretStatusFor(repoRoot, host, ageKey)
+		status, err := installer.SecretStatusFor(repoRoot, ageKey)
 		return secretLoadedMsg{status: status, err: err}
 	}
 }
@@ -243,16 +220,6 @@ func (m *model) setError(err error) {
 	m.errorText = err.Error()
 }
 
-func (m *model) selectedHost() installer.HostRecord {
-	if item, ok := m.hostList.SelectedItem().(hostItem); ok {
-		return item.record
-	}
-	if len(m.session.Hosts) > 0 {
-		return m.session.Hosts[0]
-	}
-	return installer.HostRecord{}
-}
-
 func (m *model) selectedDisk() installer.DiskRecord {
 	if item, ok := m.diskList.SelectedItem().(diskItem); ok {
 		return item.record
@@ -264,20 +231,19 @@ func (m *model) selectedDisk() installer.DiskRecord {
 }
 
 func (m *model) startSecretStep() tea.Cmd {
-	host := m.selectedHost()
 	m.step = stepSecret
 	m.secretStatus = installer.SecretStatus{}
 	m.secretChoice = 0
 	m.inputFocus = 0
+	m.luksFocus = 0
 	m.attemptedAgeKey = false
 	m.ageKeyInput.Reset()
 	m.passwordInput.Reset()
 	m.confirmInput.Reset()
 	m.luksPasswordInput.Reset()
 	m.luksConfirmInput.Reset()
-	m.luksFocus = 0
 	m.setError(nil)
-	return loadSecretCmd(m.session.RepoRoot, host.Host, "")
+	return loadSecretCmd(m.session.RepoRoot, "")
 }
 
 func (m *model) startLuksStep() {
@@ -299,7 +265,6 @@ func (m *model) startInstall() tea.Cmd {
 	m.logViewport.SetContent("")
 	request := installer.InstallRequest{
 		RepoRoot:     m.session.RepoRoot,
-		Host:         m.selectedHost().Host,
 		Disk:         m.selectedDisk().PreferredPath,
 		MountPoint:   "/mnt",
 		AgeKeyFile:   strings.TrimSpace(m.ageKeyInput.Value()),
@@ -325,7 +290,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		cardWidth := min(78, max(52, msg.Width-8))
-		m.hostList.SetSize(cardWidth-8, min(12, msg.Height-12))
 		m.diskList.SetSize(cardWidth-8, min(12, msg.Height-12))
 		m.logViewport.Width = cardWidth - 8
 		m.logViewport.Height = max(8, msg.Height-14)
@@ -341,11 +305,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.session = msg.session
 		m.cleanup = msg.cleanup
-		hostItems := make([]list.Item, 0, len(msg.session.Hosts))
-		for _, host := range msg.session.Hosts {
-			hostItems = append(hostItems, hostItem{record: host})
-		}
-		m.hostList.SetItems(hostItems)
 		diskItems := make([]list.Item, 0, len(msg.session.Disks))
 		for _, disk := range msg.session.Disks {
 			if disk.IsLiveMedia {
@@ -365,23 +324,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 		}
-		if len(m.session.Hosts) == 0 {
-			m.setError(fmt.Errorf("no installable hosts found under hosts/"))
-			return m, nil
-		}
-		if len(m.session.Disks) == 0 {
+		if len(diskItems) == 0 {
 			m.setError(fmt.Errorf("no installable disks found"))
 			return m, nil
 		}
-		if len(diskItems) == 0 {
-			m.setError(fmt.Errorf("no installable disks found after excluding live media"))
-			return m, nil
-		}
-		if len(m.session.Hosts) == 1 {
-			m.step = stepDisk
-		} else {
-			m.step = stepHost
-		}
+		m.step = stepDisk
 		return m, nil
 	case secretLoadedMsg:
 		if msg.err != nil {
@@ -390,7 +337,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.secretStatus = msg.status
 		if m.attemptedAgeKey && msg.status.Mode == installer.SecretModeNeedsAgeKey {
-			m.setError(fmt.Errorf("that age key could not decrypt the existing host secret"))
+			m.setError(fmt.Errorf("that age key could not decrypt the existing shared user secret"))
 		} else {
 			m.setError(nil)
 		}
@@ -454,10 +401,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			m.setError(msg.err)
 		}
-		if m.cleanup != nil && m.step == stepComplete {
-			m.cleanup()
-			m.cleanup = nil
-		}
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -478,10 +421,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			switch m.step {
-			case stepDisk:
-				if len(m.session.Hosts) > 1 {
-					m.step = stepHost
-				}
 			case stepSecret:
 				m.step = stepDisk
 			case stepLuks:
@@ -498,10 +437,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		case "enter":
 			switch m.step {
-			case stepHost:
-				m.setError(nil)
-				m.step = stepDisk
-				return m, nil
 			case stepDisk:
 				return m, m.startSecretStep()
 			case stepSecret:
@@ -533,11 +468,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	var cmds []tea.Cmd
-	if m.step == stepHost {
-		var cmd tea.Cmd
-		m.hostList, cmd = m.hostList.Update(msg)
-		cmds = append(cmds, cmd)
-	}
 	if m.step == stepDisk {
 		var cmd tea.Cmd
 		m.diskList, cmd = m.diskList.Update(msg)
@@ -602,7 +532,7 @@ func (m *model) handleSecretEnter() (tea.Model, tea.Cmd) {
 			}
 			m.setError(nil)
 			m.attemptedAgeKey = true
-			return m, loadSecretCmd(m.session.RepoRoot, m.selectedHost().Host, ageKey)
+			return m, loadSecretCmd(m.session.RepoRoot, ageKey)
 		}
 		if m.passwordInput.Value() == "" {
 			m.setError(fmt.Errorf("password cannot be empty"))
@@ -726,12 +656,15 @@ func (m *model) updateLuksInputs(msg tea.Msg) []tea.Cmd {
 }
 
 func (m model) visibleSteps() []step {
-	steps := []step{stepBootstrap}
-	if len(m.session.Hosts) > 1 {
-		steps = append(steps, stepHost)
+	return []step{
+		stepBootstrap,
+		stepDisk,
+		stepSecret,
+		stepLuks,
+		stepConfirm,
+		stepInstall,
+		stepComplete,
 	}
-	steps = append(steps, stepDisk, stepSecret, stepLuks, stepConfirm, stepInstall, stepComplete)
-	return steps
 }
 
 func (m model) stepIndex() (int, int) {
@@ -772,7 +705,7 @@ func (m model) renderError() string {
 
 func (m model) renderBootstrap() string {
 	lines := []string{
-		m.renderHeader("Preparing installer", "Loading host profiles, safe disks and install metadata."),
+		m.renderHeader("Preparing installer", "Loading the shared config, disks and detected hardware profile."),
 		"",
 		theme.accent.Render(m.spinner.View() + " Bootstrapping writable checkout"),
 	}
@@ -783,18 +716,6 @@ func (m model) renderBootstrap() string {
 	return strings.Join(lines, "\n")
 }
 
-func (m model) renderHost() string {
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		m.renderHeader("Choose host", "Select the existing host profile to install."),
-		"",
-		m.hostList.View(),
-		m.renderError(),
-		"",
-		theme.muted.Render("Enter continue  •  Esc back  •  q quit"),
-	)
-}
-
 func (m model) renderDisk() string {
 	return lipgloss.JoinVertical(
 		lipgloss.Left,
@@ -803,23 +724,22 @@ func (m model) renderDisk() string {
 		m.diskList.View(),
 		m.renderError(),
 		"",
-		theme.muted.Render("Enter continue  •  Esc back  •  q quit"),
+		theme.muted.Render("Enter continue  •  q quit"),
 	)
 }
 
 func (m model) renderSecret() string {
-	host := m.selectedHost()
-	header := m.renderHeader("Secrets", fmt.Sprintf("Resolve the user secret for %s.", host.Host))
+	header := m.renderHeader("Shared user secret", "Resolve the common encrypted user secret stored in the repo.")
 	lines := []string{header, ""}
 
 	switch m.secretStatus.Mode {
 	case installer.SecretModeReuse:
 		lines = append(lines,
-			theme.copy.Render("An existing host secret can be reused. No password prompt is needed."),
+			theme.copy.Render("The shared user secret can be reused. No password prompt is needed."),
 		)
 	case installer.SecretModeCreate:
 		lines = append(lines,
-			theme.copy.Render("No host secret exists yet. Enter the initial password."),
+			theme.copy.Render("No shared user secret exists yet. Enter the initial password."),
 			"",
 			fieldLine("Password", m.passwordInput.View()),
 			fieldLine("Confirm", m.confirmInput.View()),
@@ -833,7 +753,7 @@ func (m model) renderSecret() string {
 			replace = theme.active.Render("Replace secret")
 		}
 		lines = append(lines,
-			theme.copy.Render("The existing encrypted host secret cannot be decrypted with the current key."),
+			theme.copy.Render("The existing shared user secret cannot be decrypted with the current key."),
 			"",
 			lipgloss.JoinHorizontal(lipgloss.Left, useKey, "  ", replace),
 			"",
@@ -847,28 +767,8 @@ func (m model) renderSecret() string {
 			)
 		}
 	}
-	lines = append(lines, m.renderError(), "", theme.muted.Render("Enter continue  •  Tab switch field  •  Esc back"))
-	return strings.Join(lines, "\n")
-}
 
-func (m model) renderConfirm() string {
-	host := m.selectedHost()
-	disk := m.selectedDisk()
-	lines := []string{
-		m.renderHeader("Final confirmation", "This will erase the selected disk with disko."),
-		"",
-		theme.copy.Render("Host: " + host.Host),
-		theme.copy.Render("User: " + host.User),
-		theme.copy.Render("Disk: " + disk.PreferredPath),
-		theme.copy.Render("Install output: " + host.InitialOutput),
-		theme.copy.Render("Final output: " + host.FinalOutput),
-		theme.copy.Render("cryptroot: passphrase configured"),
-		"",
-		fieldLine("Type erase", m.eraseInput.View()),
-		m.renderError(),
-		"",
-		theme.muted.Render("Enter install  •  Esc back"),
-	}
+	lines = append(lines, m.renderError(), "", theme.muted.Render("Enter continue  •  Tab switch field  •  Esc back"))
 	return strings.Join(lines, "\n")
 }
 
@@ -881,6 +781,27 @@ func (m model) renderLuks() string {
 		m.renderError(),
 		"",
 		theme.muted.Render("Enter continue  •  Tab switch field  •  Esc back"),
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (m model) renderConfirm() string {
+	disk := m.selectedDisk()
+	lines := []string{
+		m.renderHeader("Final confirmation", "This will erase the selected disk and install the shared profile."),
+		"",
+		theme.copy.Render("User: " + m.session.UserName),
+		theme.copy.Render("Disk: " + disk.PreferredPath),
+		theme.copy.Render("Install output: " + m.session.InstallPlan.InitialOutput),
+		theme.copy.Render("Final output: " + m.session.InstallPlan.FinalOutput),
+		theme.copy.Render("Platform: " + m.session.Detected.Platform.Kind + " / " + m.session.Detected.Platform.Hypervisor),
+		theme.copy.Render("Graphics: " + m.session.Detected.Graphics.Vendor),
+		theme.copy.Render("cryptroot: passphrase configured"),
+		"",
+		fieldLine("Type erase", m.eraseInput.View()),
+		m.renderError(),
+		"",
+		theme.muted.Render("Enter install  •  Esc back"),
 	}
 	return strings.Join(lines, "\n")
 }
@@ -944,8 +865,6 @@ func fieldLine(label, field string) string {
 func (m model) View() string {
 	content := m.renderBootstrap()
 	switch m.step {
-	case stepHost:
-		content = m.renderHost()
 	case stepDisk:
 		content = m.renderDisk()
 	case stepSecret:

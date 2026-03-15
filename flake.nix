@@ -1,5 +1,5 @@
 {
-  description = "Single-flake NixOS + Home Manager configuration with disko and sops-nix";
+  description = "Single-flake NixOS + Home Manager configuration with cached machine detection";
 
   inputs = {
     nixpkgs.url = "github:nixos/nixpkgs/nixos-unstable";
@@ -30,112 +30,47 @@
       lib = nixpkgs.lib;
       systems = [ "x86_64-linux" ];
       forAllSystems = lib.genAttrs systems;
-      hostsDir = ./hosts;
-      hostNames =
-        lib.sort lib.lessThan
-          (builtins.attrNames
-            (lib.filterAttrs
-              (name: kind: kind == "directory" && name != "_template")
-              (builtins.readDir hostsDir)));
-      hostMeta = builtins.listToAttrs (
-        map (hostName: {
-          name = hostName;
-          value = import (hostsDir + "/${hostName}/vars.nix");
-        }) hostNames
-      );
+      sharedSettings = import ./settings.nix;
+      localState = import ./lib/loadLocalState.nix;
       mkInstallPlan = import ./lib/mkInstallPlan.nix {
         inherit lib;
       };
-      installPlan = builtins.listToAttrs (
-        map (hostName: {
-          name = hostName;
-          value = mkInstallPlan {
-            inherit hostName;
-            hostVars = hostMeta.${hostName};
-          };
-        }) hostNames
-      );
-      mkHost = import ./lib/mkHost.nix {
-        inherit inputs hostMeta installPlan;
+      installPlan = mkInstallPlan sharedSettings;
+      mkSystem = import ./lib/mkSystem.nix {
+        inherit inputs installPlan localState sharedSettings;
       };
       mkHome = import ./lib/mkHome.nix {
-        inherit inputs hostMeta;
+        inherit inputs sharedSettings;
       };
       bootstrapRepoUrl = "https://github.com/weqeqq/config.nix.git";
       bootstrapRepoRev = if self ? rev then self.rev else "";
-      stripSharedPrelude = scriptText:
-        lib.replaceStrings
-          [
-            ''#!/usr/bin/env bash
-
-set -euo pipefail
-
-script_dir="$(dirname -- "''${BASH_SOURCE[0]}")"
-script_dir="$(cd -- "$script_dir" && pwd -P)"
-# shellcheck source=./common.sh
-source "$script_dir/common.sh"
-
-''
-          ]
-          [ "" ]
-          scriptText;
-      mkPackagedScriptText = scriptPath:
-        let
-          commonBody = lib.replaceStrings
-            [
-              "#!/usr/bin/env bash\n\n"
-            ]
-            [ "" ]
-            (builtins.readFile ./scripts/common.sh);
-        in
-        ''
-          export CONFIG_NIX_BOOTSTRAP_REPO_URL=${lib.escapeShellArg bootstrapRepoUrl}
-          export CONFIG_NIX_BOOTSTRAP_REV=${lib.escapeShellArg bootstrapRepoRev}
-          export CONFIG_NIX_FLAKE_SOURCE=${lib.escapeShellArg self.outPath}
-
-          ${commonBody}
-
-          ${stripSharedPrelude (builtins.readFile scriptPath)}
-        '';
-      finalNixosConfigurations = builtins.listToAttrs (
-        map (hostName: {
-          name = hostName;
-          value = mkHost {
-            inherit hostName;
-            system = hostMeta.${hostName}.system or "x86_64-linux";
-          };
-        }) hostNames
-      );
-      installNixosConfigurations = builtins.listToAttrs (
-        map (hostName: {
-          name = "${hostName}-install";
-          value = mkHost {
-            inherit hostName;
-            system = hostMeta.${hostName}.system or "x86_64-linux";
-            phase = "install";
-          };
-        }) hostNames
-      );
-      nixosConfigurations = finalNixosConfigurations // installNixosConfigurations;
-      homeConfigurations = builtins.listToAttrs (
-        map (hostName:
-          let
-            vars = hostMeta.${hostName};
-          in
-          {
-            name = "${vars.user.name}@${hostName}";
-            value = mkHome {
-              inherit hostName;
-              system = vars.system or "x86_64-linux";
-            };
-          }) hostNames
-      );
+      defaultSystem = sharedSettings.system or "x86_64-linux";
     in
     {
-      inherit homeConfigurations nixosConfigurations;
+      nixosConfigurations = {
+        default = mkSystem {
+          system = defaultSystem;
+        };
+        default-install = mkSystem {
+          system = defaultSystem;
+          phase = "install";
+        };
+      };
+
+      homeConfigurations =
+        let
+          config = mkHome {
+            system = defaultSystem;
+          };
+          userName = sharedSettings.user.name;
+        in
+        {
+          default = config;
+          "${userName}" = config;
+        };
 
       lib = {
-        inherit hostMeta hostNames installPlan;
+        inherit installPlan localState sharedSettings;
       };
 
       formatter = forAllSystems (system:
@@ -170,161 +105,125 @@ source "$script_dir/common.sh"
           pkgs = nixpkgs.legacyPackages.${system};
           diskoCli = inputs.disko.packages.${system}.disko;
           diskoInstall = inputs.disko.packages.${system}.disko-install;
-          installHostRuntimePath = lib.makeBinPath [
+          toolsRuntimePath = lib.makeBinPath [
             pkgs.age
+            pkgs.coreutils
             diskoCli
+            pkgs.findutils
             pkgs.gitMinimal
+            pkgs.gnugrep
+            pkgs.gnused
             pkgs.gnutar
+            pkgs.jq
             pkgs.nix
             pkgs.nixos-install-tools
             pkgs.sops
+            pkgs.sbctl
+            pkgs.systemd
             pkgs.util-linux
             pkgs.whois
           ];
-          installHostPackage = pkgs.buildGoModule {
-            pname = "install-host";
+          toolsPackage = pkgs.buildGoModule {
+            pname = "config-nix-tools";
             version = "0.1.0";
             src = ./installer;
             subPackages = [
-              "cmd/install-host"
+              "cmd/install-system"
+              "cmd/finalize-system"
+              "cmd/rekey-system"
+              "cmd/rebuild-system"
             ];
             vendorHash = "sha256-0XcMt2lu+teI2M6VTI9ia7Wg38KTDGjEUd0cw6FwNd4=";
             nativeBuildInputs = [
               pkgs.makeWrapper
             ];
             postFixup = ''
-              wrapProgram "$out/bin/install-host" \
-                --prefix PATH : "${installHostRuntimePath}" \
-                --set CONFIG_NIX_BOOTSTRAP_REPO_URL ${lib.escapeShellArg bootstrapRepoUrl} \
-                --set CONFIG_NIX_BOOTSTRAP_REV ${lib.escapeShellArg bootstrapRepoRev} \
-                --set CONFIG_NIX_FLAKE_SOURCE ${lib.escapeShellArg self.outPath}
+              for bin in "$out"/bin/*; do
+                wrapProgram "$bin" \
+                  --prefix PATH : "${toolsRuntimePath}" \
+                  --set CONFIG_NIX_BOOTSTRAP_REPO_URL ${lib.escapeShellArg bootstrapRepoUrl} \
+                  --set CONFIG_NIX_BOOTSTRAP_REV ${lib.escapeShellArg bootstrapRepoRev} \
+                  --set CONFIG_NIX_FLAKE_SOURCE ${lib.escapeShellArg self.outPath}
+              done
             '';
-          };
-          finalizeHostPackage = pkgs.writeShellApplication {
-            name = "finalize-host";
-            runtimeInputs = [
-              pkgs.coreutils
-              pkgs.findutils
-              pkgs.gnugrep
-              pkgs.gnused
-              pkgs.jq
-              pkgs.nix
-              pkgs.sbctl
-              pkgs.systemd
-              pkgs.util-linux
-            ];
-            text = mkPackagedScriptText ./scripts/finalize-host.sh;
-          };
-          rekeyHostPackage = pkgs.writeShellApplication {
-            name = "rekey-host";
-            runtimeInputs = [
-              pkgs.age
-              pkgs.coreutils
-              pkgs.gitMinimal
-              pkgs.gnugrep
-              pkgs.gnused
-              pkgs.jq
-              pkgs.nix
-              pkgs.sops
-              pkgs.ssh-to-age
-            ];
-            text = mkPackagedScriptText ./scripts/rekey-host.sh;
           };
         in
         {
-          default = installHostPackage;
-          inherit diskoCli diskoInstall;
-          finalize-host = finalizeHostPackage;
-          install-host = installHostPackage;
-          rekey-host = rekeyHostPackage;
+          default = toolsPackage;
+          config-nix-tools = toolsPackage;
+          diskoCli = diskoCli;
+          diskoInstall = diskoInstall;
+          finalize-host = toolsPackage;
+          finalize-system = toolsPackage;
+          install-host = toolsPackage;
+          install-system = toolsPackage;
+          rebuild-system = toolsPackage;
+          rekey-host = toolsPackage;
+          rekey-system = toolsPackage;
         }
       );
 
       apps = forAllSystems (system:
         let
-          finalizeHostApp = {
-            type = "app";
-            program = "${self.packages.${system}.finalize-host}/bin/finalize-host";
-            meta.description = "Finalize a deferred config.nix host install";
-          };
-          installHostApp = {
-            type = "app";
-            program = "${self.packages.${system}.install-host}/bin/install-host";
-            meta.description = "Install a config.nix host onto a target disk";
-          };
-          rekeyHostApp = {
-            type = "app";
-            program = "${self.packages.${system}.rekey-host}/bin/rekey-host";
-            meta.description = "Rekey sops secrets for a config.nix host";
-          };
+          toolsPath = "${self.packages.${system}.config-nix-tools}/bin";
+          mkApp =
+            program: description:
+            {
+              type = "app";
+              inherit program;
+              meta.description = description;
+            };
         in
         {
-          default = installHostApp;
-          finalize-host = finalizeHostApp;
-          install-host = installHostApp;
-          rekey-host = rekeyHostApp;
+          default = mkApp "${toolsPath}/install-system" "Install the shared config.nix profile onto a target disk";
+          finalize-host = mkApp "${toolsPath}/finalize-system" "Finalize a deferred config.nix install";
+          finalize-system = mkApp "${toolsPath}/finalize-system" "Finalize a deferred config.nix install";
+          install-host = mkApp "${toolsPath}/install-system" "Install the shared config.nix profile onto a target disk";
+          install-system = mkApp "${toolsPath}/install-system" "Install the shared config.nix profile onto a target disk";
+          rebuild-system = mkApp "${toolsPath}/rebuild-system" "Rebuild the current config.nix system using local machine state";
+          rekey-host = mkApp "${toolsPath}/rekey-system" "Rekey shared config.nix secrets";
+          rekey-system = mkApp "${toolsPath}/rekey-system" "Rekey shared config.nix secrets";
         }
       );
 
       checks = forAllSystems (system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          hostChecks = builtins.listToAttrs (
-            map (hostName: {
-              name = "system-${hostName}";
-              value = self.nixosConfigurations.${hostName}.config.system.build.toplevel;
-            }) hostNames
-          );
-          installHostChecks = builtins.listToAttrs (
-            map (hostName: {
-              name = "system-${hostName}-install";
-              value = self.nixosConfigurations."${hostName}-install".config.system.build.toplevel;
-            }) hostNames
-          );
-          homeChecks = builtins.listToAttrs (
-            map (hostName:
-              let
-                vars = hostMeta.${hostName};
-              in
-              {
-                name = "home-${vars.user.name}-${hostName}";
-                value = self.homeConfigurations."${vars.user.name}@${hostName}".activationPackage;
-              }) hostNames
-          );
           installPlanChecks = {
             install-plan-secure-boot =
               let
                 plan = mkInstallPlan {
-                  hostName = "secure-host";
-                  hostVars.boot.secureBoot.enable = true;
+                  boot.secureBoot.enable = true;
                 };
               in
               assert plan.needsFinalize;
-              assert plan.initialOutput == "secure-host-install";
-              assert plan.finalOutput == "secure-host";
-              assert plan.installOutput == "secure-host-install";
+              assert plan.initialOutput == "default-install";
+              assert plan.finalOutput == "default";
+              assert plan.installOutput == "default-install";
               assert plan.deferredFeatures == [ "secure-boot" ];
               pkgs.runCommand "install-plan-secure-boot" { } ''
                 touch "$out"
               '';
             install-plan-direct =
               let
-                plan = mkInstallPlan {
-                  hostName = "plain-host";
-                  hostVars = { };
-                };
+                plan = mkInstallPlan { };
               in
               assert (!plan.needsFinalize);
-              assert plan.initialOutput == "plain-host";
-              assert plan.finalOutput == "plain-host";
-              assert plan.installOutput == "plain-host-install";
+              assert plan.initialOutput == "default";
+              assert plan.finalOutput == "default";
+              assert plan.installOutput == "default-install";
               assert plan.deferredFeatures == [ ];
               pkgs.runCommand "install-plan-direct" { } ''
                 touch "$out"
               '';
           };
         in
-        hostChecks // installHostChecks // homeChecks // installPlanChecks
+        {
+          home-default = self.homeConfigurations.default.activationPackage;
+          system-default = self.nixosConfigurations.default.config.system.build.toplevel;
+          system-default-install = self.nixosConfigurations.default-install.config.system.build.toplevel;
+        }
+        // installPlanChecks
       );
     };
 }

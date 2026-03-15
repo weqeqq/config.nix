@@ -1,159 +1,126 @@
 # NixOS Config
 
-Single-flake NixOS + Home Manager repository for a desktop host with `NVIDIA`, `Hyprland`, `disko` and `sops-nix`.
+Single-flake NixOS + Home Manager repo with one shared profile, cached machine detection, `Hyprland`, `disko`, `sops-nix`, and an install TUI written in Go.
 
-## What is in this repo
+## Model
 
-- One root `flake.nix`.
-- `nixosConfigurations.<host>` for full system builds.
-- `homeConfigurations."<user>@<host>"` for standalone Home Manager builds.
-- `disko` layout per host.
-- `sops-nix` integration with encrypted secrets stored in the same repository.
-- `nix run github:weqeqq/config.nix` for a minimal fullscreen Go installer from the official minimal ISO.
+- Shared declarative settings live in [settings.nix](/home/weqeq/Projects/config.nix/settings.nix).
+- The installer detects whether the target is a VM, has `NVIDIA`, has `AMD`, or should stay generic.
+- That detected state is cached locally in `/etc/nixos/local/` and is reused on rebuilds.
+- Runtime user credentials are derived into `/etc/nixos/local/runtime-secrets.nix`.
+- The repo itself stays machine-agnostic. There are no per-host config directories.
 
-The current real hosts are:
+Main flake outputs:
 
-- `desktop`: the main bare-metal profile with `NVIDIA`;
-- `vm-test`: a VM-friendly smoke-test profile with `qemu-guest` and without `NVIDIA`.
+- `nixosConfigurations.default`
+- `nixosConfigurations.default-install`
+- `homeConfigurations.default`
+- `packages.x86_64-linux.install-system`
+- `packages.x86_64-linux.finalize-system`
+- `packages.x86_64-linux.rebuild-system`
+- `packages.x86_64-linux.rekey-system`
 
-The structure is already ready for more hosts and more users.
-
-## Repository layout
+## Layout
 
 ```text
 .
 ├── flake.nix
+├── settings.nix
+├── disko.nix
+├── home/
 ├── lib/
 ├── modules/
-├── hosts/
-│   ├── desktop/
-│   └── _template/
-├── homes/
-│   ├── weqeq/
-│   └── _template/
-├── scripts/
+├── installer/
 ├── secrets/
 └── .github/workflows/
 ```
 
-## Before the first install
+## Before first install
 
-Edit [hosts/desktop/vars.nix](/home/weqeq/Projects/config.nix/hosts/desktop/vars.nix) and [hosts/vm-test/vars.nix](/home/weqeq/Projects/config.nix/hosts/vm-test/vars.nix):
+Edit [settings.nix](/home/weqeq/Projects/config.nix/settings.nix):
 
-- replace `ownerAgeRecipients` with your real public `age` recipient;
-- replace the placeholder SSH public key in `user.openssh.authorizedKeys`;
-- change hostname, locale, timezone or username if needed.
-- set `boot.secureBoot.enable` to the final desired state; the installer will pick an install-safe profile automatically when Secure Boot must be deferred.
+- `ownerAgeRecipients`
+- `user.openssh.authorizedKeys`
+- `user.name`, locale, timezone, hostname prefix if needed
+- `boot.secureBoot.enable` to the final desired state
 
-Useful commands for the owner key:
+Useful owner key commands:
 
 ```bash
 ssh-to-age < ~/.ssh/id_ed25519.pub
 ```
 
-or, if you already use an age key:
+or:
 
 ```bash
 age-keygen -y ~/.config/sops/age/keys.txt
 ```
 
-## Install on a new machine
+## Install
 
-1. Boot the official NixOS minimal ISO in UEFI mode.
-2. Bring up networking.
-3. Run the installer app.
+Boot the official NixOS minimal ISO in UEFI mode, bring up networking, then run:
 
 ```bash
 nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix
 ```
 
-The installer opens a full-screen Go TUI. It is keyboard-first, centered, and intentionally minimal.
+The Go TUI asks only for runtime install data:
 
-Primary keys:
-
-- `Tab` and `Shift-Tab`: move focus between fields
-- arrow keys: navigate host and disk lists
-- `Enter`: continue
-- `Esc`: go back on non-destructive steps
-- `q`: quit before the install starts
-- `l`: toggle phases vs raw logs during install
-
-The wizard asks only for install-time inputs:
-
-- host profile
 - target disk
-- age key path only when an existing encrypted host secret cannot be decrypted automatically
-- initial password only when the host secret does not already decrypt
+- age key path only if an existing encrypted shared user secret cannot be decrypted automatically
+- initial user password only if `secrets/user.yaml` does not already decrypt
+- `cryptroot` passphrase
 - final destructive confirmation
 
-The default install screen shows only large phases. Raw command output is hidden unless you toggle it explicitly.
+The installer automatically:
 
-What the installer does:
+- bootstraps or reuses a writable git checkout
+- detects platform and graphics
+- writes `/etc/nixos/local/machine-state.nix`
+- writes `/etc/nixos/local/hardware-configuration.nix`
+- writes `/etc/nixos/local/runtime-secrets.nix`
+- renders `.sops.yaml`
+- updates or creates `secrets/user.yaml`
+- copies a full git checkout to `/etc/nixos`
+- installs `default` or `default-install` depending on deferred features
 
-- bootstraps a writable git checkout automatically if you launch it from `github:...`;
-- evaluates `lib.installPlan.<host>` and picks either `<host>` or `<host>-install` automatically;
-- wipes and partitions the disk with `disko`;
-- mounts the target filesystem under `/mnt`;
-- generates `hosts/<host>/hardware-configuration.nix`;
-- creates `/var/lib/sops-nix/key.txt` on the target system;
-- writes `secrets/hosts/<host>.age.pub` into the repo;
-- regenerates `.sops.yaml`;
-- prompts for the initial user password and stores its hash encrypted in `secrets/hosts/<host>.yaml`;
-- stages generated install files in git;
-- copies the resulting full git checkout into `/mnt/etc/nixos`;
-- writes `/var/lib/config-nix/install-receipt.json`;
-- writes a first-boot finalization marker if deferred features exist;
-- runs `nixos-install` from `path:/mnt/etc/nixos`.
-
-If `secrets/hosts/<host>.yaml` already exists and `sops` can decrypt it through `--age-key-file` or `SOPS_AGE_KEY_FILE`, the installer reuses the existing secret and skips the password prompt.
-
-For `vm-test` the flow is the same, but the target profile enables `qemu-guest` integration and skips all `NVIDIA` settings.
+Local machine state is intentionally untracked. Generated secret changes and `.sops.yaml` stay visible in `git status`.
 
 ## Secure Boot
 
-Secure Boot support is implemented as a two-phase flow:
+Secure Boot is two-phase:
 
-1. Keep `boot.secureBoot.enable = true` in the host vars from the start if that is your desired final state.
-2. The installer will install `<host>-install`, which keeps `systemd-boot` active and leaves Secure Boot deferred.
-3. On the first real boot, `config-nix-finalize.service` runs before `greetd`, creates keys under `/var/lib/sbctl`, builds the signed final profile with `lanzaboote`, enrolls keys with `sbctl`, and reboots.
-4. The next boot should land in the final signed profile.
+1. Keep `boot.secureBoot.enable = true` in [settings.nix](/home/weqeq/Projects/config.nix/settings.nix).
+2. The installer chooses `default-install`.
+3. First boot runs `config-nix-finalize.service`.
+4. The finalizer creates keys if needed, builds the final signed profile, enrolls keys, and reboots.
 
-If the finalizer fails, the machine stays bootable in the install-safe profile and you can rerun it manually:
+Manual retry:
 
 ```bash
-sudo bash /etc/nixos/scripts/finalize-host.sh --host desktop --repo /etc/nixos
+sudo /run/current-system/sw/bin/finalize-system --repo /etc/nixos
 ```
 
-The canonical repo on the installed machine is `/etc/nixos`, and it is a real git checkout with the generated install files already staged. That is also the path the finalizer uses for all rebuilds. Finalizer state is written to `/var/lib/config-nix/finalize-status.json`.
-
-After the first successful boot, commit the generated files:
-
-- `hosts/desktop/hardware-configuration.nix`
-- `hosts/vm-test/hardware-configuration.nix` if you installed `vm-test`
-- `secrets/hosts/desktop.age.pub`
-- `secrets/hosts/vm-test.age.pub` if you installed `vm-test`
-- `secrets/hosts/desktop.yaml`
-- `secrets/hosts/vm-test.yaml` if you installed `vm-test`
-- `.sops.yaml`
+Finalization state is written under `/var/lib/config-nix/`.
 
 ## Day-2 usage
 
-Rebuild the current system:
+Rebuild the installed system:
 
 ```bash
-sudo nixos-rebuild switch --flake /etc/nixos#desktop
+sudo /run/current-system/sw/bin/rebuild-system
 ```
 
-Or for the VM host:
+Pass a different `nixos-rebuild` action if needed:
 
 ```bash
-sudo nixos-rebuild switch --flake /etc/nixos#vm-test
+sudo /run/current-system/sw/bin/rebuild-system -- boot
 ```
 
-Build only the Home Manager config:
+Build Home Manager only:
 
 ```bash
-nix build /etc/nixos#homeConfigurations."weqeq@desktop".activationPackage
+nix build /etc/nixos#homeConfigurations.default.activationPackage
 ```
 
 Update inputs:
@@ -162,55 +129,51 @@ Update inputs:
 nix flake update /etc/nixos
 ```
 
-Review the staged install-generated changes:
+Review repo changes:
 
 ```bash
 git -C /etc/nixos status
 ```
 
-## Where to add packages
+## Packages and config
 
-System packages shared by every machine:
+Shared system packages and defaults:
 
-- edit [modules/nixos/base.nix](/home/weqeq/Projects/config.nix/modules/nixos/base.nix)
+- [modules/nixos/base.nix](/home/weqeq/Projects/config.nix/modules/nixos/base.nix)
+- [modules/nixos/graphics.nix](/home/weqeq/Projects/config.nix/modules/nixos/graphics.nix)
+- [modules/nixos/hyprland.nix](/home/weqeq/Projects/config.nix/modules/nixos/hyprland.nix)
 
-System packages only for one machine:
+Shared Home Manager config:
 
-- edit the relevant host file, for example [hosts/desktop/packages.nix](/home/weqeq/Projects/config.nix/hosts/desktop/packages.nix) or [hosts/vm-test/packages.nix](/home/weqeq/Projects/config.nix/hosts/vm-test/packages.nix)
+- [home/default.nix](/home/weqeq/Projects/config.nix/home/default.nix)
+- [home/packages.nix](/home/weqeq/Projects/config.nix/home/packages.nix)
+- [modules/home/base.nix](/home/weqeq/Projects/config.nix/modules/home/base.nix)
 
-User packages:
+Disk layout:
 
-- edit [homes/weqeq/packages.nix](/home/weqeq/Projects/config.nix/homes/weqeq/packages.nix)
+- [disko.nix](/home/weqeq/Projects/config.nix/disko.nix)
 
-## Secrets workflow
+## Secrets
 
-Rekey one host after changing recipients or copying the repo to a fresh machine:
+Shared secrets:
 
-```bash
-nix --extra-experimental-features 'nix-command flakes' run /etc/nixos#rekey-host -- --host desktop --repo /etc/nixos
-```
+- [secrets/common.yaml](/home/weqeq/Projects/config.nix/secrets/common.yaml)
+- `secrets/user.yaml`
 
-Edit a host secret:
-
-```bash
-sops secrets/hosts/desktop.yaml
-```
-
-Shared secrets can live in `secrets/common.yaml`. Host-specific secrets live in `secrets/hosts/<host>.yaml`.
-
-## Adding another host
-
-1. Copy `hosts/_template` to `hosts/<new-host>`.
-2. Copy `homes/_template` to `homes/<new-user>` if you need a new user.
-3. Update `vars.nix`, `disko.nix` and package files.
-4. Run:
+Edit them with `sops`:
 
 ```bash
-nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix
+sops /etc/nixos/secrets/user.yaml
 ```
 
-Host discovery is automatic. You do not need to edit `flake.nix` when adding a new host directory.
+Rekey:
 
-## CI
+```bash
+nix run /etc/nixos#rekey-system -- --repo /etc/nixos
+```
 
-GitHub Actions runs `nix flake check` on push and pull requests.
+## Notes
+
+- The installer detects hardware once and caches it; rebuilds do not redetect automatically.
+- If hardware changes later, regenerate the local state by reinstalling or by extending the Go tooling with an explicit refresh flow.
+- GitHub Actions runs `nix flake check`.

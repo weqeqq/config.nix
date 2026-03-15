@@ -9,27 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"sort"
 	"strings"
 )
-
-type hostMeta struct {
-	HostName           string   `json:"hostName"`
-	OwnerAgeRecipients []string `json:"ownerAgeRecipients"`
-	User               struct {
-		Name string `json:"name"`
-	} `json:"user"`
-}
-
-type hostMetaMap map[string]hostMeta
-
-type installPlan struct {
-	DeferredFeatures []string `json:"deferredFeatures"`
-	FinalOutput      string   `json:"finalOutput"`
-	InitialOutput    string   `json:"initialOutput"`
-	InstallOutput    string   `json:"installOutput"`
-	NeedsFinalize    bool     `json:"needsFinalize"`
-}
 
 func ensureNixConfig() {
 	const line = "experimental-features = nix-command flakes"
@@ -157,6 +138,16 @@ func isGitCheckout(repoRoot string) bool {
 
 func flakeRefForRepo(repoRoot string) string {
 	return "path:" + repoRoot
+}
+
+func localStateDirForRepo(repoRoot string) string {
+	return filepath.Join(repoRoot, "local")
+}
+
+func localStateEnv(repoRoot string) map[string]string {
+	return map[string]string{
+		"CONFIG_NIX_LOCAL_STATE_DIR": localStateDirForRepo(repoRoot),
+	}
 }
 
 func assertExpectedRepoRevision(repoRoot string) error {
@@ -316,68 +307,34 @@ func flakeRevisionLabel(repoRoot string) string {
 	return bootstrapRev
 }
 
-func loadAllHostMetaFromNix(repoRoot string) (hostMetaMap, error) {
-	var meta hostMetaMap
-	if err := nixEvalJSON(repoRoot, "lib.hostMeta", &meta); err != nil {
-		return nil, err
+var loadSharedSettings = loadSharedSettingsFromNix
+
+func loadSharedSettingsFromNix(repoRoot string) (SharedSettings, error) {
+	var settings SharedSettings
+	if err := nixEvalJSON(repoRoot, "lib.sharedSettings", &settings); err != nil {
+		return SharedSettings{}, err
 	}
-	return meta, nil
+	return settings, nil
 }
 
-var loadAllHostMeta = loadAllHostMetaFromNix
+var loadInstallPlan = loadInstallPlanFromNix
 
-func hostInstallPlan(repoRoot, host string) (installPlan, error) {
-	var plan installPlan
-	if err := nixEvalJSON(repoRoot, "lib.installPlan."+host, &plan); err != nil {
-		return installPlan{}, err
+func loadInstallPlanFromNix(repoRoot string) (InstallPlan, error) {
+	var plan InstallPlan
+	if err := nixEvalJSON(repoRoot, "lib.installPlan", &plan); err != nil {
+		return InstallPlan{}, err
 	}
 	return plan, nil
 }
 
-func assertOwnerRecipientsReady(host string, meta hostMeta) error {
-	if len(meta.OwnerAgeRecipients) == 0 {
-		return fmt.Errorf("hosts/%s/vars.nix must define at least one ownerAgeRecipients entry", host)
+func assertOwnerRecipientsReady(settings SharedSettings) error {
+	if len(settings.OwnerAgeRecipients) == 0 {
+		return fmt.Errorf("settings.nix must define at least one ownerAgeRecipients entry")
 	}
-	for _, recipient := range meta.OwnerAgeRecipients {
+	for _, recipient := range settings.OwnerAgeRecipients {
 		if strings.Contains(strings.ToLower(recipient), "replace") {
-			return fmt.Errorf("replace ownerAgeRecipients in hosts/%s/vars.nix before running the installer", host)
+			return fmt.Errorf("replace ownerAgeRecipients in settings.nix before running the installer")
 		}
 	}
 	return nil
-}
-
-func loadHosts(repoRoot string) ([]HostRecord, error) {
-	meta, err := loadAllHostMeta(repoRoot)
-	if err != nil {
-		return nil, err
-	}
-
-	keys := make([]string, 0, len(meta))
-	for key := range meta {
-		keys = append(keys, key)
-	}
-	sort.Strings(keys)
-
-	hosts := make([]HostRecord, 0, len(keys))
-	for _, host := range keys {
-		hostMeta := meta[host]
-		if err := assertOwnerRecipientsReady(host, hostMeta); err != nil {
-			return nil, err
-		}
-		plan, err := hostInstallPlan(repoRoot, host)
-		if err != nil {
-			return nil, err
-		}
-		hosts = append(hosts, HostRecord{
-			Host:             host,
-			User:             hostMeta.User.Name,
-			HostName:         hostMeta.HostName,
-			InitialOutput:    plan.InitialOutput,
-			FinalOutput:      plan.FinalOutput,
-			NeedsFinalize:    plan.NeedsFinalize,
-			DeferredFeatures: append([]string(nil), plan.DeferredFeatures...),
-			OwnerRecipients:  append([]string(nil), hostMeta.OwnerAgeRecipients...),
-		})
-	}
-	return hosts, nil
 }

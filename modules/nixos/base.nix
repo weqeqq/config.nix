@@ -1,12 +1,13 @@
-{ pkgs, hostVars, ... }:
+{ inputs, machineState, pkgs, sharedSettings, ... }:
 {
-  networking.hostName = hostVars.hostName;
+  networking.hostName =
+    if (machineState.hostName or "") != "" then machineState.hostName else "${sharedSettings.hostNamePrefix}-generic";
   networking.networkmanager.enable = true;
 
-  time.timeZone = hostVars.timeZone;
+  time.timeZone = sharedSettings.timeZone;
 
-  i18n.defaultLocale = hostVars.locale;
-  console.keyMap = hostVars.consoleKeyMap;
+  i18n.defaultLocale = sharedSettings.locale;
+  console.keyMap = sharedSettings.consoleKeyMap;
 
   nix = {
     channel.enable = false;
@@ -28,6 +29,7 @@
     curl
     git
     jq
+    inputs.self.packages.${pkgs.system}.config-nix-tools
     sbctl
     sops
     ssh-to-age
@@ -52,5 +54,5 @@
     memoryPercent = 100;
   };
 
-  system.stateVersion = hostVars.systemStateVersion;
+  system.stateVersion = sharedSettings.systemStateVersion;
 }

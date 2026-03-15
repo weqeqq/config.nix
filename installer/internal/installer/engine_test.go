@@ -25,13 +25,14 @@ func TestDiskoCommandUsesNonInteractiveWipeFlag(t *testing.T) {
 	}
 }
 
-func TestNixosInstallCommandDisablesInteractiveRootPassword(t *testing.T) {
-	args := nixosInstallCommand("/mnt", "/mnt/etc/nixos", "vm-test-install")
+func TestNixosInstallCommandUsesImpureHostlessInstall(t *testing.T) {
+	args := nixosInstallCommand("/mnt", "/mnt/etc/nixos", "default-install")
 
 	expected := []string{
 		"nixos-install",
 		"--root", "/mnt",
-		"--flake", "path:/mnt/etc/nixos#vm-test-install",
+		"--flake", "path:/mnt/etc/nixos#default-install",
+		"--impure",
 		"--no-root-passwd",
 	}
 
@@ -45,10 +46,11 @@ func TestNixosInstallCommandDisablesInteractiveRootPassword(t *testing.T) {
 	}
 }
 
-func TestRenderDiskoConfigIncludesLuksPasswordFile(t *testing.T) {
-	config := renderDiskoConfig("/repo/hosts/vm-test/disko.nix", "/dev/vda", "/tmp/luks-pass")
+func TestRenderDiskoConfigIncludesSharedDiskoAndPasswordFile(t *testing.T) {
+	config := renderDiskoConfig("/repo/disko.nix", "/dev/vda", "/tmp/luks-pass")
 
 	for _, snippet := range []string{
+		`import "/repo/disko.nix"`,
 		`diskDevice = "/dev/vda";`,
 		`luksPasswordFile = "/tmp/luks-pass";`,
 	} {
