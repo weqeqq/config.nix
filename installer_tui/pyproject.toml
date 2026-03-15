@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "config-nix-installer"
+version = "0.1.0"
+description = "Fullscreen installer for config.nix"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+install-host = "config_nix_installer.app:run_app"
+install-host-backend = "config_nix_installer.backend:main"
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["."]

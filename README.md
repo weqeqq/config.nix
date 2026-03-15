@@ -9,7 +9,7 @@ Single-flake NixOS + Home Manager repository for a desktop host with `NVIDIA`, `
 - `homeConfigurations."<user>@<host>"` for standalone Home Manager builds.
 - `disko` layout per host.
 - `sops-nix` integration with encrypted secrets stored in the same repository.
-- `nix run github:weqeqq/config.nix` for guided installation from the official minimal ISO.
+- `nix run github:weqeqq/config.nix` for a fullscreen installer from the official minimal ISO.
 
 The current real hosts are:
 
@@ -67,12 +67,23 @@ age-keygen -y ~/.config/sops/age/keys.txt
 nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix
 ```
 
-The TUI asks for:
+The installer opens a full-screen `Textual` wizard. It is keyboard-first and keeps a persistent step rail, summary pane and log view.
+
+Primary keys:
+
+- `Tab` and `Shift-Tab`: move focus
+- arrow keys: navigate host and disk lists
+- `Enter`: continue
+- `Esc`: go back on non-destructive steps
+- `q`: quit before the install starts
+- `l`: toggle curated progress vs raw logs during install
+
+The wizard asks only for install-time inputs:
 
 - host profile
 - target disk
-- age key path only if an existing encrypted host secret cannot be decrypted automatically
-- initial password only if the host secret does not already decrypt
+- age key path only when an existing encrypted host secret cannot be decrypted automatically
+- initial password only when the host secret does not already decrypt
 - final destructive confirmation
 
 What the installer does:
@@ -95,18 +106,6 @@ What the installer does:
 If `secrets/hosts/<host>.yaml` already exists and `sops` can decrypt it through `--age-key-file` or `SOPS_AGE_KEY_FILE`, the installer reuses the existing secret and skips the password prompt.
 
 For `vm-test` the flow is the same, but the target profile enables `qemu-guest` integration and skips all `NVIDIA` settings.
-
-Advanced usage:
-
-```bash
-nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix -- --non-interactive --host vm-test --disk /dev/vda
-```
-
-If the repository already contains `secrets/hosts/<host>.yaml` and you want the installer to reuse it without prompting for a password in non-interactive mode, pass your private `age` key explicitly:
-
-```bash
-nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix -- --non-interactive --host desktop --disk /dev/disk/by-id/YOUR-DISK --age-key-file ~/.config/sops/age/keys.txt
-```
 
 ## Secure Boot
 

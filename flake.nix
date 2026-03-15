@@ -152,12 +152,11 @@ source "$script_dir/common.sh"
               pkgs.age
               pkgs.alejandra
               inputs.disko.packages.${system}.disko
-              pkgs.fzf
               pkgs.gitMinimal
-              pkgs.gum
               pkgs.gnused
               pkgs.jq
               pkgs.nix
+              pkgs.python3Packages.textual
               pkgs.sops
               pkgs.ssh-to-age
               pkgs.whois
@@ -171,27 +170,50 @@ source "$script_dir/common.sh"
           pkgs = nixpkgs.legacyPackages.${system};
           diskoCli = inputs.disko.packages.${system}.disko;
           diskoInstall = inputs.disko.packages.${system}.disko-install;
-          installHostPackage = pkgs.writeShellApplication {
-            name = "install-host";
-            runtimeInputs = [
-              pkgs.age
-              pkgs.coreutils
-              diskoCli
-              pkgs.findutils
-              pkgs.fzf
-              pkgs.gitMinimal
-              pkgs.gum
-              pkgs.gnugrep
-              pkgs.gnused
-              pkgs.gnutar
-              pkgs.jq
-              pkgs.nix
-              pkgs.sops
-              pkgs.ssh-to-age
-              pkgs.util-linux
-              pkgs.whois
+          installHostRuntimePath = lib.makeBinPath [
+            pkgs.age
+            pkgs.bash
+            pkgs.coreutils
+            diskoCli
+            pkgs.findutils
+            pkgs.gitMinimal
+            pkgs.gnugrep
+            pkgs.gnused
+            pkgs.gnutar
+            pkgs.jq
+            pkgs.nix
+            pkgs.nixos-install-tools
+            pkgs.sops
+            pkgs.util-linux
+            pkgs.whois
+          ];
+          installHostPackage = pkgs.python3Packages.buildPythonApplication {
+            pname = "install-host";
+            version = "0.1.0";
+            pyproject = true;
+            src = ./installer_tui;
+            build-system = [
+              pkgs.python3Packages.setuptools
             ];
-            text = mkPackagedScriptText ./scripts/install-host.sh;
+            dependencies = [
+              pkgs.python3Packages.textual
+            ];
+            nativeBuildInputs = [
+              pkgs.makeWrapper
+            ];
+            pythonImportsCheck = [
+              "config_nix_installer.app"
+              "config_nix_installer.backend"
+            ];
+            postFixup = ''
+              for program in "$out/bin/install-host" "$out/bin/install-host-backend"; do
+                wrapProgram "$program" \
+                  --prefix PATH : "${installHostRuntimePath}" \
+                  --set CONFIG_NIX_BOOTSTRAP_REPO_URL ${lib.escapeShellArg bootstrapRepoUrl} \
+                  --set CONFIG_NIX_BOOTSTRAP_REV ${lib.escapeShellArg bootstrapRepoRev} \
+                  --set CONFIG_NIX_FLAKE_SOURCE ${lib.escapeShellArg self.outPath}
+              done
+            '';
           };
           finalizeHostPackage = pkgs.writeShellApplication {
             name = "finalize-host";
