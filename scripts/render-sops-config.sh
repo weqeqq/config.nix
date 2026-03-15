@@ -9,8 +9,9 @@ else
 fi
 
 repo_root="${1:-$(pwd -P)}"
+repo_flake_ref="path:${repo_root}"
 
-host_meta_json="$(nix --extra-experimental-features 'nix-command flakes' eval --json "$repo_root#lib.hostMeta")"
+host_meta_json="$(nix --extra-experimental-features 'nix-command flakes' eval --json "${repo_flake_ref}#lib.hostMeta")"
 tmp_file="$(mktemp)"
 
 mapfile -t common_keys < <(

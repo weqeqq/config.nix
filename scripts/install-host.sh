@@ -50,6 +50,7 @@ for tool in "${require_tools[@]}"; do
 done
 
 repo_root="$(prepare_repo_root "$repo_arg")"
+repo_flake_ref="$(flake_ref_for_repo "$repo_root")"
 
 meta_json="$(load_host_meta_json "$repo_root" "$host")"
 assert_owner_recipients_ready "$host" "$meta_json"
@@ -127,7 +128,7 @@ if is_sops_file "$repo_root/secrets/common.yaml"; then
   sops_in_repo "$repo_root" updatekeys -y "$repo_root/secrets/common.yaml"
 fi
 
-nixos-install --root "$mount_point" --flake "$repo_root#${host}"
+nixos-install --root "$mount_point" --flake "${repo_flake_ref}#${host}"
 
 printf '\nInstall completed for host %s.\n' "$host"
 printf 'Generated or updated:\n'

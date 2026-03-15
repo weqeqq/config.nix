@@ -32,6 +32,11 @@ ensure_flake_repo() {
   [[ -f "$repo_root/flake.nix" ]] || die "repo checkout not found at $repo_root"
 }
 
+flake_ref_for_repo() {
+  local repo_root="$1"
+  printf 'path:%s\n' "$repo_root"
+}
+
 normalize_repo_root() {
   local repo_root="$1"
   realpath -m "$repo_root"
@@ -121,7 +126,7 @@ prepare_repo_root() {
 load_host_meta_json() {
   local repo_root="$1"
   local host="$2"
-  nix --extra-experimental-features 'nix-command flakes' eval --json "$repo_root#lib.hostMeta.${host}"
+  nix --extra-experimental-features 'nix-command flakes' eval --json "$(flake_ref_for_repo "$repo_root")#lib.hostMeta.${host}"
 }
 
 assert_owner_recipients_ready() {
