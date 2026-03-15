@@ -141,11 +141,7 @@ source "$script_dir/common.sh"
           pkgs = nixpkgs.legacyPackages.${system};
           diskoCli = inputs.disko.packages.${system}.disko;
           diskoInstall = inputs.disko.packages.${system}.disko-install;
-        in
-        {
-          inherit diskoCli diskoInstall;
-
-          install-host = pkgs.writeShellApplication {
+          installHostPackage = pkgs.writeShellApplication {
             name = "install-host";
             runtimeInputs = [
               pkgs.age
@@ -164,8 +160,7 @@ source "$script_dir/common.sh"
             ];
             text = mkPackagedScriptText ./scripts/install-host.sh;
           };
-
-          rekey-host = pkgs.writeShellApplication {
+          rekeyHostPackage = pkgs.writeShellApplication {
             name = "rekey-host";
             runtimeInputs = [
               pkgs.age
@@ -180,20 +175,32 @@ source "$script_dir/common.sh"
             ];
             text = mkPackagedScriptText ./scripts/rekey-host.sh;
           };
+        in
+        {
+          default = installHostPackage;
+          inherit diskoCli diskoInstall;
+          install-host = installHostPackage;
+          rekey-host = rekeyHostPackage;
         }
       );
 
-      apps = forAllSystems (system: {
-        install-host = {
-          type = "app";
-          program = "${self.packages.${system}.install-host}/bin/install-host";
-        };
-
-        rekey-host = {
-          type = "app";
-          program = "${self.packages.${system}.rekey-host}/bin/rekey-host";
-        };
-      });
+      apps = forAllSystems (system:
+        let
+          installHostApp = {
+            type = "app";
+            program = "${self.packages.${system}.install-host}/bin/install-host";
+          };
+          rekeyHostApp = {
+            type = "app";
+            program = "${self.packages.${system}.rekey-host}/bin/rekey-host";
+          };
+        in
+        {
+          default = installHostApp;
+          install-host = installHostApp;
+          rekey-host = rekeyHostApp;
+        }
+      );
 
       checks = forAllSystems (system:
         let
