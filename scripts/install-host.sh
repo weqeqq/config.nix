@@ -10,6 +10,7 @@ source "$script_dir/common.sh"
 host=""
 disk=""
 repo_arg=""
+age_key_file=""
 assume_yes=0
 mount_point="/mnt"
 
@@ -27,6 +28,10 @@ while [[ "$#" -gt 0 ]]; do
       repo_arg="$2"
       shift 2
       ;;
+    --age-key-file)
+      age_key_file="$2"
+      shift 2
+      ;;
     --yes)
       assume_yes=1
       shift
@@ -41,8 +46,8 @@ while [[ "$#" -gt 0 ]]; do
   esac
 done
 
-[[ -n "$host" ]] || die "usage: nix run .#install-host -- --host <name> --disk <device> [--repo /path/to/checkout] [--yes]"
-[[ -n "$disk" ]] || die "usage: nix run .#install-host -- --host <name> --disk <device> [--repo /path/to/checkout] [--yes]"
+[[ -n "$host" ]] || die "usage: nix run .#install-host -- --host <name> --disk <device> [--repo /path/to/checkout] [--age-key-file /path/to/keys.txt] [--yes]"
+[[ -n "$disk" ]] || die "usage: nix run .#install-host -- --host <name> --disk <device> [--repo /path/to/checkout] [--age-key-file /path/to/keys.txt] [--yes]"
 
 require_tools=(age-keygen disko jq mkpasswd nix sops nixos-generate-config nixos-install)
 for tool in "${require_tools[@]}"; do
@@ -51,6 +56,7 @@ done
 
 repo_root="$(prepare_repo_root "$repo_arg")"
 repo_flake_ref="$(flake_ref_for_repo "$repo_root")"
+prepare_sops_age_key "$age_key_file"
 
 meta_json="$(load_host_meta_json "$repo_root" "$host")"
 assert_owner_recipients_ready "$host" "$meta_json"
@@ -89,6 +95,9 @@ age-keygen -y "$mount_point/var/lib/sops-nix/key.txt" > "$host_pub_file"
 render_sops_config "$repo_root"
 
 if [[ ! -f "$host_secret_file" ]]; then
+  if [[ -n "${SOPS_AGE_KEY_FILE:-}" ]]; then
+    printf 'No existing secret file at %s; falling back to interactive password setup.\n' "$host_secret_file" >&2
+  fi
   while true; do
     read -r -s -p "Initial password for ${user_name}: " password_one
     printf '\n' >&2

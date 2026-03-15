@@ -73,6 +73,12 @@ If you run the app from a remote flake reference instead of a local checkout, pa
 nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix#install-host -- --repo ./config.nix --host desktop --disk /dev/disk/by-id/YOUR-DISK
 ```
 
+If the repository already contains `secrets/hosts/<host>.yaml` and you want the installer to reuse it without prompting for a password, pass your private `age` key explicitly:
+
+```bash
+nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix#install-host -- --repo ./config.nix --age-key-file ~/.config/sops/age/keys.txt --host desktop --disk /dev/disk/by-id/YOUR-DISK
+```
+
 For a VM install test, use the dedicated host:
 
 ```bash
@@ -90,6 +96,8 @@ What the installer does:
 - regenerates `.sops.yaml`;
 - prompts for the initial user password and stores its hash encrypted in `secrets/hosts/<host>.yaml`;
 - runs `nixos-install --flake .#<host>`.
+
+If `secrets/hosts/<host>.yaml` already exists and `sops` can decrypt it through `--age-key-file` or `SOPS_AGE_KEY_FILE`, the installer reuses the existing secret and skips the password prompt.
 
 For `vm-test` the flow is the same, but the target profile enables `qemu-guest` integration and skips all `NVIDIA` settings.
 

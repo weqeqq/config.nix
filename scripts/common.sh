@@ -42,6 +42,11 @@ normalize_repo_root() {
   realpath -m "$repo_root"
 }
 
+normalize_existing_path() {
+  local path="$1"
+  realpath -e "$path"
+}
+
 assert_expected_repo_revision() {
   local repo_root="$1"
   local expected_rev="${CONFIG_NIX_BOOTSTRAP_REV:-}"
@@ -157,6 +162,22 @@ sops_in_repo() {
   shift
 
   sops --config "$repo_root/.sops.yaml" "$@"
+}
+
+prepare_sops_age_key() {
+  local requested_key_file="${1:-}"
+  local key_file="${requested_key_file:-${SOPS_AGE_KEY_FILE:-}}"
+
+  if [[ -z "$key_file" ]]; then
+    if [[ -f "$HOME/.config/sops/age/keys.txt" ]]; then
+      export SOPS_AGE_KEY_FILE="$HOME/.config/sops/age/keys.txt"
+    fi
+    return 0
+  fi
+
+  key_file="$(normalize_existing_path "$key_file")"
+  [[ -f "$key_file" ]] || die "age key file not found: $key_file"
+  export SOPS_AGE_KEY_FILE="$key_file"
 }
 
 confirm_disk_wipe() {

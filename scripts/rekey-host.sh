@@ -10,6 +10,7 @@ source "$script_dir/common.sh"
 host=""
 host_key_file=""
 repo_arg=""
+age_key_file=""
 
 while [[ "$#" -gt 0 ]]; do
   case "$1" in
@@ -25,15 +26,20 @@ while [[ "$#" -gt 0 ]]; do
       repo_arg="$2"
       shift 2
       ;;
+    --age-key-file)
+      age_key_file="$2"
+      shift 2
+      ;;
     *)
       die "unknown argument: $1"
       ;;
   esac
 done
 
-[[ -n "$host" ]] || die "usage: nix run .#rekey-host -- --host <name> [--repo /path/to/checkout] [--host-key-file /path/to/key.txt]"
+[[ -n "$host" ]] || die "usage: nix run .#rekey-host -- --host <name> [--repo /path/to/checkout] [--age-key-file /path/to/keys.txt] [--host-key-file /path/to/key.txt]"
 
 repo_root="$(prepare_repo_root "$repo_arg")"
+prepare_sops_age_key "$age_key_file"
 
 meta_json="$(load_host_meta_json "$repo_root" "$host")"
 assert_owner_recipients_ready "$host" "$meta_json"
