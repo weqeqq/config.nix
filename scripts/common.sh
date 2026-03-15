@@ -27,6 +27,21 @@ normalize_repo_root() {
   realpath -m "$repo_root"
 }
 
+assert_expected_repo_revision() {
+  local repo_root="$1"
+  local expected_rev="${CONFIG_NIX_BOOTSTRAP_REV:-}"
+  local actual_rev=""
+
+  [[ -n "$expected_rev" ]] || return 0
+  [[ -d "$repo_root/.git" ]] || return 0
+
+  actual_rev="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || true)"
+  [[ -n "$actual_rev" ]] || return 0
+  [[ "$actual_rev" == "$expected_rev" ]] && return 0
+
+  die "existing checkout at $repo_root is at $actual_rev but installer expects $expected_rev; remove that directory or pass a fresh --repo path"
+}
+
 bootstrap_repo_checkout() {
   local repo_root="$1"
   local repo_parent
@@ -70,6 +85,7 @@ prepare_repo_root() {
   repo_root="$(normalize_repo_root "$repo_root")"
 
   if [[ -f "$repo_root/flake.nix" ]]; then
+    assert_expected_repo_revision "$repo_root"
     printf '%s\n' "$repo_root"
     return 0
   fi
@@ -88,6 +104,7 @@ prepare_repo_root() {
 
   bootstrap_repo_checkout "$repo_root"
   ensure_flake_repo "$repo_root"
+  assert_expected_repo_revision "$repo_root"
   printf '%s\n' "$repo_root"
 }
 
