@@ -44,6 +44,36 @@
       mkHome = import ./lib/mkHome.nix {
         inherit inputs hostMeta;
       };
+      stripSharedPrelude = scriptText:
+        lib.replaceStrings
+          [
+            ''#!/usr/bin/env bash
+
+set -euo pipefail
+
+script_dir="$(dirname -- "''${BASH_SOURCE[0]}")"
+script_dir="$(cd -- "$script_dir" && pwd -P)"
+# shellcheck source=./common.sh
+source "$script_dir/common.sh"
+
+''
+          ]
+          [ "" ]
+          scriptText;
+      mkPackagedScriptText = scriptPath:
+        let
+          commonBody = lib.replaceStrings
+            [
+              "#!/usr/bin/env bash\n\n"
+            ]
+            [ "" ]
+            (builtins.readFile ./scripts/common.sh);
+        in
+        ''
+          ${commonBody}
+
+          ${stripSharedPrelude (builtins.readFile scriptPath)}
+        '';
       nixosConfigurations = builtins.listToAttrs (
         map (hostName: {
           name = hostName;
@@ -126,7 +156,7 @@
               pkgs.util-linux
               pkgs.whois
             ];
-            text = builtins.readFile ./scripts/install-host.sh;
+            text = mkPackagedScriptText ./scripts/install-host.sh;
           };
 
           rekey-host = pkgs.writeShellApplication {
@@ -142,7 +172,7 @@
               pkgs.sops
               pkgs.ssh-to-age
             ];
-            text = builtins.readFile ./scripts/rekey-host.sh;
+            text = mkPackagedScriptText ./scripts/rekey-host.sh;
           };
         }
       );

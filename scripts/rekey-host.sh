@@ -2,7 +2,8 @@
 
 set -euo pipefail
 
-script_dir="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+script_dir="$(dirname -- "${BASH_SOURCE[0]}")"
+script_dir="$(cd -- "$script_dir" && pwd -P)"
 # shellcheck source=./common.sh
 source "$script_dir/common.sh"
 
