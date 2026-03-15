@@ -43,6 +43,7 @@ Edit [hosts/desktop/vars.nix](/home/weqeq/Projects/config.nix/hosts/desktop/vars
 - replace `ownerAgeRecipients` with your real public `age` recipient;
 - replace the placeholder SSH public key in `user.openssh.authorizedKeys`;
 - change hostname, locale, timezone or username if needed.
+- leave `boot.secureBoot.enable = false` for the first install; enable it only after the machine has completed one normal boot.
 
 Useful commands for the owner key:
 
@@ -91,6 +92,44 @@ What the installer does:
 - runs `nixos-install --flake .#<host>`.
 
 For `vm-test` the flow is the same, but the target profile enables `qemu-guest` integration and skips all `NVIDIA` settings.
+
+## Secure Boot
+
+Secure Boot support is implemented with `lanzaboote`, but it is intentionally opt-in per host. The safe flow is:
+
+1. Install and boot once with the default `systemd-boot` setup.
+2. Confirm that the machine is really booting in `UEFI` mode and currently uses `systemd-boot`:
+
+```bash
+bootctl status
+```
+
+3. Generate Secure Boot keys on the installed machine:
+
+```bash
+sudo sbctl create-keys
+```
+
+4. Flip `boot.secureBoot.enable` to `true` in the host vars file, for example [hosts/desktop/vars.nix](/home/weqeq/Projects/config.nix/hosts/desktop/vars.nix).
+5. Rebuild:
+
+```bash
+sudo nixos-rebuild switch --flake .#desktop
+```
+
+6. Verify that binaries are signed:
+
+```bash
+sudo sbctl verify
+```
+
+7. Reboot into firmware setup mode, clear old custom Secure Boot keys if needed, then enroll your new keys:
+
+```bash
+sudo sbctl enroll-keys --microsoft
+```
+
+After that, reboot with Secure Boot enabled in firmware.
 
 After the first successful boot, commit the generated files:
 

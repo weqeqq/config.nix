@@ -15,10 +15,12 @@ inputs.nixpkgs.lib.nixosSystem {
 
   modules = [
     inputs.disko.nixosModules.disko
+    inputs.lanzaboote.nixosModules.lanzaboote
     inputs.sops-nix.nixosModules.sops
     inputs.home-manager.nixosModules.home-manager
     ../modules/nixos/base.nix
     ../modules/nixos/boot.nix
+    ../modules/nixos/secure-boot.nix
     (import ../modules/nixos/users.nix {
       lib = inputs.nixpkgs.lib;
       inherit hostName hostVars;

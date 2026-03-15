@@ -28,6 +28,7 @@
     curl
     git
     jq
+    sbctl
     sops
     ssh-to-age
     vim

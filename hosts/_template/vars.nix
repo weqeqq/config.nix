@@ -7,6 +7,11 @@
   systemStateVersion = "25.11";
   homeStateVersion = "25.11";
 
+  boot.secureBoot = {
+    enable = false;
+    pkiBundle = "/var/lib/sbctl";
+  };
+
   user = {
     name = "your-user";
     description = "your-user";

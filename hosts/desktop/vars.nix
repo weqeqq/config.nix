@@ -15,6 +15,11 @@
     };
   };
 
+  boot.secureBoot = {
+    enable = false;
+    pkiBundle = "/var/lib/sbctl";
+  };
+
   virtualization.qemuGuest = false;
 
   user = {
