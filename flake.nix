@@ -152,7 +152,9 @@ source "$script_dir/common.sh"
               pkgs.age
               pkgs.alejandra
               inputs.disko.packages.${system}.disko
+              pkgs.fzf
               pkgs.gitMinimal
+              pkgs.gum
               pkgs.gnused
               pkgs.jq
               pkgs.nix
@@ -176,7 +178,9 @@ source "$script_dir/common.sh"
               pkgs.coreutils
               diskoCli
               pkgs.findutils
+              pkgs.fzf
               pkgs.gitMinimal
+              pkgs.gum
               pkgs.gnugrep
               pkgs.gnused
               pkgs.gnutar

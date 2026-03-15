@@ -9,7 +9,7 @@ Single-flake NixOS + Home Manager repository for a desktop host with `NVIDIA`, `
 - `homeConfigurations."<user>@<host>"` for standalone Home Manager builds.
 - `disko` layout per host.
 - `sops-nix` integration with encrypted secrets stored in the same repository.
-- `nix run .#install-host` for local installation from the official minimal ISO.
+- `nix run github:weqeqq/config.nix` for guided installation from the official minimal ISO.
 
 The current real hosts are:
 
@@ -64,30 +64,20 @@ age-keygen -y ~/.config/sops/age/keys.txt
 3. Run the installer app.
 
 ```bash
-nix --extra-experimental-features 'nix-command flakes' run .#install-host -- --host desktop --disk /dev/disk/by-id/YOUR-DISK
+nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix
 ```
 
-If you run the app from a remote flake reference instead of a local checkout, pass a target checkout path for generated files:
+The TUI asks for:
 
-```bash
-nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix#install-host -- --repo ./config.nix --host desktop --disk /dev/disk/by-id/YOUR-DISK
-```
-
-If the repository already contains `secrets/hosts/<host>.yaml` and you want the installer to reuse it without prompting for a password, pass your private `age` key explicitly:
-
-```bash
-nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix#install-host -- --repo ./config.nix --age-key-file ~/.config/sops/age/keys.txt --host desktop --disk /dev/disk/by-id/YOUR-DISK
-```
-
-For a VM install test, use the dedicated host:
-
-```bash
-nix --extra-experimental-features 'nix-command flakes' run .#install-host -- --host vm-test --disk /dev/vda
-```
+- host profile
+- target disk
+- age key path only if an existing encrypted host secret cannot be decrypted automatically
+- initial password only if the host secret does not already decrypt
+- final destructive confirmation
 
 What the installer does:
 
-- bootstraps a writable repository checkout if you launch it from `github:...#install-host`;
+- bootstraps a writable git checkout automatically if you launch it from `github:...`;
 - evaluates `lib.installPlan.<host>` and picks either `<host>` or `<host>-install` automatically;
 - wipes and partitions the disk with `disko`;
 - mounts the target filesystem under `/mnt`;
@@ -96,13 +86,27 @@ What the installer does:
 - writes `secrets/hosts/<host>.age.pub` into the repo;
 - regenerates `.sops.yaml`;
 - prompts for the initial user password and stores its hash encrypted in `secrets/hosts/<host>.yaml`;
-- copies the resulting repo snapshot into `/mnt/etc/nixos`;
+- stages generated install files in git;
+- copies the resulting full git checkout into `/mnt/etc/nixos`;
+- writes `/var/lib/config-nix/install-receipt.json`;
 - writes a first-boot finalization marker if deferred features exist;
 - runs `nixos-install` from `path:/mnt/etc/nixos`.
 
 If `secrets/hosts/<host>.yaml` already exists and `sops` can decrypt it through `--age-key-file` or `SOPS_AGE_KEY_FILE`, the installer reuses the existing secret and skips the password prompt.
 
 For `vm-test` the flow is the same, but the target profile enables `qemu-guest` integration and skips all `NVIDIA` settings.
+
+Advanced usage:
+
+```bash
+nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix -- --non-interactive --host vm-test --disk /dev/vda
+```
+
+If the repository already contains `secrets/hosts/<host>.yaml` and you want the installer to reuse it without prompting for a password in non-interactive mode, pass your private `age` key explicitly:
+
+```bash
+nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix -- --non-interactive --host desktop --disk /dev/disk/by-id/YOUR-DISK --age-key-file ~/.config/sops/age/keys.txt
+```
 
 ## Secure Boot
 
@@ -119,7 +123,7 @@ If the finalizer fails, the machine stays bootable in the install-safe profile a
 sudo bash /etc/nixos/scripts/finalize-host.sh --host desktop --repo /etc/nixos
 ```
 
-The canonical repo on the installed machine is `/etc/nixos`, and that is the path the finalizer uses for all rebuilds.
+The canonical repo on the installed machine is `/etc/nixos`, and it is a real git checkout with the generated install files already staged. That is also the path the finalizer uses for all rebuilds. Finalizer state is written to `/var/lib/config-nix/finalize-status.json`.
 
 After the first successful boot, commit the generated files:
 
@@ -155,6 +159,12 @@ Update inputs:
 
 ```bash
 nix flake update /etc/nixos
+```
+
+Review the staged install-generated changes:
+
+```bash
+git -C /etc/nixos status
 ```
 
 ## Where to add packages
@@ -195,7 +205,7 @@ Shared secrets can live in `secrets/common.yaml`. Host-specific secrets live in 
 4. Run:
 
 ```bash
-nix --extra-experimental-features 'nix-command flakes' run .#install-host -- --host <new-host> --disk /dev/disk/by-id/YOUR-DISK
+nix --extra-experimental-features 'nix-command flakes' run github:weqeqq/config.nix
 ```
 
 Host discovery is automatic. You do not need to edit `flake.nix` when adding a new host directory.
