@@ -22,6 +22,11 @@ ensure_flake_repo() {
   [[ -f "$repo_root/flake.nix" ]] || die "repo checkout not found at $repo_root"
 }
 
+normalize_repo_root() {
+  local repo_root="$1"
+  realpath -m "$repo_root"
+}
+
 bootstrap_repo_checkout() {
   local repo_root="$1"
   local repo_parent
@@ -62,6 +67,7 @@ prepare_repo_root() {
   else
     repo_root="$(pwd -P)/config.nix"
   fi
+  repo_root="$(normalize_repo_root "$repo_root")"
 
   if [[ -f "$repo_root/flake.nix" ]]; then
     printf '%s\n' "$repo_root"
