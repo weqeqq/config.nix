@@ -134,6 +134,12 @@ load_host_meta_json() {
   nix --extra-experimental-features 'nix-command flakes' eval --json "$(flake_ref_for_repo "$repo_root")#lib.hostMeta.${host}"
 }
 
+load_install_plan_json() {
+  local repo_root="$1"
+  local host="$2"
+  nix --extra-experimental-features 'nix-command flakes' eval --json "$(flake_ref_for_repo "$repo_root")#lib.installPlan.${host}"
+}
+
 assert_owner_recipients_ready() {
   local host="$1"
   local meta_json="$2"
@@ -162,6 +168,48 @@ sops_in_repo() {
   shift
 
   sops --config "$repo_root/.sops.yaml" "$@"
+}
+
+copy_repo_snapshot() {
+  local repo_root="$1"
+  local target_root="$2"
+
+  mkdir -p "$target_root"
+  tar \
+    --exclude-vcs \
+    --exclude='./result' \
+    --exclude='./result-*' \
+    --exclude='./.direnv' \
+    -C "$repo_root" \
+    -cf - \
+    . \
+    | tar -C "$target_root" -xf -
+}
+
+write_sbctl_config() {
+  local config_file="$1"
+  local pki_bundle="$2"
+
+  cat > "$config_file" <<EOF
+landlock: true
+keydir: ${pki_bundle}/keys
+guid: ${pki_bundle}/GUID
+files_db: ${pki_bundle}/files.json
+bundles_db: ${pki_bundle}/bundles.json
+keys:
+  pk:
+    privkey: ${pki_bundle}/keys/PK/PK.key
+    pubkey: ${pki_bundle}/keys/PK/PK.pem
+    type: file
+  kek:
+    privkey: ${pki_bundle}/keys/KEK/KEK.key
+    pubkey: ${pki_bundle}/keys/KEK/KEK.pem
+    type: file
+  db:
+    privkey: ${pki_bundle}/keys/db/db.key
+    pubkey: ${pki_bundle}/keys/db/db.pem
+    type: file
+EOF
 }
 
 prepare_sops_age_key() {

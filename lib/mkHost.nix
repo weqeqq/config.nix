@@ -1,7 +1,8 @@
-{ inputs, hostMeta }:
-{ hostName, system }:
+{ inputs, hostMeta, installPlan }:
+{ hostName, system, phase ? "final" }:
 let
   hostVars = hostMeta.${hostName};
+  hostInstallPlan = installPlan.${hostName};
   userName = hostVars.user.name;
   hostModule = ../hosts + "/${hostName}";
   homeModule = ../homes + "/${userName}";
@@ -10,7 +11,7 @@ inputs.nixpkgs.lib.nixosSystem {
   inherit system;
 
   specialArgs = {
-    inherit inputs hostName hostVars userName;
+    inherit inputs hostInstallPlan hostName hostVars phase userName;
   };
 
   modules = [
@@ -20,6 +21,7 @@ inputs.nixpkgs.lib.nixosSystem {
     inputs.home-manager.nixosModules.home-manager
     ../modules/nixos/base.nix
     ../modules/nixos/boot.nix
+    ../modules/nixos/install-finalize.nix
     ../modules/nixos/secure-boot.nix
     (import ../modules/nixos/users.nix {
       lib = inputs.nixpkgs.lib;

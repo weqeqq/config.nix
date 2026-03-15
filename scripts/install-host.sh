@@ -49,22 +49,25 @@ done
 [[ -n "$host" ]] || die "usage: nix run .#install-host -- --host <name> --disk <device> [--repo /path/to/checkout] [--age-key-file /path/to/keys.txt] [--yes]"
 [[ -n "$disk" ]] || die "usage: nix run .#install-host -- --host <name> --disk <device> [--repo /path/to/checkout] [--age-key-file /path/to/keys.txt] [--yes]"
 
-require_tools=(age-keygen disko jq mkpasswd nix sops nixos-generate-config nixos-install)
+require_tools=(age-keygen disko jq mkpasswd nix sops tar nixos-generate-config nixos-install)
 for tool in "${require_tools[@]}"; do
   command -v "$tool" >/dev/null 2>&1 || die "required command not found: $tool"
 done
 
 repo_root="$(prepare_repo_root "$repo_arg")"
-repo_flake_ref="$(flake_ref_for_repo "$repo_root")"
 prepare_sops_age_key "$age_key_file"
 
 meta_json="$(load_host_meta_json "$repo_root" "$host")"
+install_plan_json="$(load_install_plan_json "$repo_root" "$host")"
 assert_owner_recipients_ready "$host" "$meta_json"
 
 host_dir="$repo_root/hosts/$host"
 [[ -d "$host_dir" ]] || die "unknown host: $host"
 
 user_name="$(printf '%s' "$meta_json" | jq -r '.user.name')"
+initial_output="$(printf '%s' "$install_plan_json" | jq -r '.initialOutput')"
+final_output="$(printf '%s' "$install_plan_json" | jq -r '.finalOutput')"
+needs_finalize="$(printf '%s' "$install_plan_json" | jq -r '.needsFinalize')"
 host_secret_file="$repo_root/secrets/hosts/${host}.yaml"
 host_pub_file="$repo_root/secrets/hosts/${host}.age.pub"
 mkdir -p "$(dirname "$host_secret_file")"
@@ -137,12 +140,27 @@ if is_sops_file "$repo_root/secrets/common.yaml"; then
   sops_in_repo "$repo_root" updatekeys -y "$repo_root/secrets/common.yaml"
 fi
 
-nixos-install --root "$mount_point" --flake "${repo_flake_ref}#${host}"
+target_repo_root="$mount_point/etc/nixos"
+copy_repo_snapshot "$repo_root" "$target_repo_root"
+
+if [[ "$needs_finalize" == "true" ]]; then
+  install -d -m 0700 "$mount_point/var/lib/config-nix"
+  : > "$mount_point/var/lib/config-nix/finalize-pending"
+fi
+
+nixos-install --root "$mount_point" --flake "path:${target_repo_root}#${initial_output}"
 
 printf '\nInstall completed for host %s.\n' "$host"
-printf 'Generated or updated:\n'
+printf 'Installed output: %s\n' "$initial_output"
+printf 'Final output: %s\n' "$final_output"
+if [[ "$needs_finalize" == "true" ]]; then
+  printf 'First-boot finalization is pending and will run from /etc/nixos.\n'
+else
+  printf 'No first-boot finalization is needed.\n'
+fi
+printf 'Generated or updated in the source repo:\n'
 printf '  - hosts/%s/hardware-configuration.nix\n' "$host"
 printf '  - secrets/hosts/%s.age.pub\n' "$host"
 printf '  - secrets/hosts/%s.yaml\n' "$host"
 printf '  - .sops.yaml\n'
-printf 'Commit those files after first boot.\n'
+printf 'Persisted repo snapshot: /etc/nixos\n'

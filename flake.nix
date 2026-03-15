@@ -43,8 +43,20 @@
           value = import (hostsDir + "/${hostName}/vars.nix");
         }) hostNames
       );
+      mkInstallPlan = import ./lib/mkInstallPlan.nix {
+        inherit lib;
+      };
+      installPlan = builtins.listToAttrs (
+        map (hostName: {
+          name = hostName;
+          value = mkInstallPlan {
+            inherit hostName;
+            hostVars = hostMeta.${hostName};
+          };
+        }) hostNames
+      );
       mkHost = import ./lib/mkHost.nix {
-        inherit inputs hostMeta;
+        inherit inputs hostMeta installPlan;
       };
       mkHome = import ./lib/mkHome.nix {
         inherit inputs hostMeta;
@@ -85,7 +97,7 @@ source "$script_dir/common.sh"
 
           ${stripSharedPrelude (builtins.readFile scriptPath)}
         '';
-      nixosConfigurations = builtins.listToAttrs (
+      finalNixosConfigurations = builtins.listToAttrs (
         map (hostName: {
           name = hostName;
           value = mkHost {
@@ -94,6 +106,17 @@ source "$script_dir/common.sh"
           };
         }) hostNames
       );
+      installNixosConfigurations = builtins.listToAttrs (
+        map (hostName: {
+          name = "${hostName}-install";
+          value = mkHost {
+            inherit hostName;
+            system = hostMeta.${hostName}.system or "x86_64-linux";
+            phase = "install";
+          };
+        }) hostNames
+      );
+      nixosConfigurations = finalNixosConfigurations // installNixosConfigurations;
       homeConfigurations = builtins.listToAttrs (
         map (hostName:
           let
@@ -112,7 +135,7 @@ source "$script_dir/common.sh"
       inherit homeConfigurations nixosConfigurations;
 
       lib = {
-        inherit hostMeta hostNames;
+        inherit hostMeta hostNames installPlan;
       };
 
       formatter = forAllSystems (system:
@@ -156,6 +179,7 @@ source "$script_dir/common.sh"
               pkgs.gitMinimal
               pkgs.gnugrep
               pkgs.gnused
+              pkgs.gnutar
               pkgs.jq
               pkgs.nix
               pkgs.sops
@@ -164,6 +188,21 @@ source "$script_dir/common.sh"
               pkgs.whois
             ];
             text = mkPackagedScriptText ./scripts/install-host.sh;
+          };
+          finalizeHostPackage = pkgs.writeShellApplication {
+            name = "finalize-host";
+            runtimeInputs = [
+              pkgs.coreutils
+              pkgs.findutils
+              pkgs.gnugrep
+              pkgs.gnused
+              pkgs.jq
+              pkgs.nix
+              pkgs.sbctl
+              pkgs.systemd
+              pkgs.util-linux
+            ];
+            text = mkPackagedScriptText ./scripts/finalize-host.sh;
           };
           rekeyHostPackage = pkgs.writeShellApplication {
             name = "rekey-host";
@@ -184,6 +223,7 @@ source "$script_dir/common.sh"
         {
           default = installHostPackage;
           inherit diskoCli diskoInstall;
+          finalize-host = finalizeHostPackage;
           install-host = installHostPackage;
           rekey-host = rekeyHostPackage;
         }
@@ -191,17 +231,25 @@ source "$script_dir/common.sh"
 
       apps = forAllSystems (system:
         let
+          finalizeHostApp = {
+            type = "app";
+            program = "${self.packages.${system}.finalize-host}/bin/finalize-host";
+            meta.description = "Finalize a deferred config.nix host install";
+          };
           installHostApp = {
             type = "app";
             program = "${self.packages.${system}.install-host}/bin/install-host";
+            meta.description = "Install a config.nix host onto a target disk";
           };
           rekeyHostApp = {
             type = "app";
             program = "${self.packages.${system}.rekey-host}/bin/rekey-host";
+            meta.description = "Rekey sops secrets for a config.nix host";
           };
         in
         {
           default = installHostApp;
+          finalize-host = finalizeHostApp;
           install-host = installHostApp;
           rekey-host = rekeyHostApp;
         }
@@ -209,10 +257,17 @@ source "$script_dir/common.sh"
 
       checks = forAllSystems (system:
         let
+          pkgs = nixpkgs.legacyPackages.${system};
           hostChecks = builtins.listToAttrs (
             map (hostName: {
               name = "system-${hostName}";
               value = self.nixosConfigurations.${hostName}.config.system.build.toplevel;
+            }) hostNames
+          );
+          installHostChecks = builtins.listToAttrs (
+            map (hostName: {
+              name = "system-${hostName}-install";
+              value = self.nixosConfigurations."${hostName}-install".config.system.build.toplevel;
             }) hostNames
           );
           homeChecks = builtins.listToAttrs (
@@ -225,8 +280,40 @@ source "$script_dir/common.sh"
                 value = self.homeConfigurations."${vars.user.name}@${hostName}".activationPackage;
               }) hostNames
           );
+          installPlanChecks = {
+            install-plan-secure-boot =
+              let
+                plan = mkInstallPlan {
+                  hostName = "secure-host";
+                  hostVars.boot.secureBoot.enable = true;
+                };
+              in
+              assert plan.needsFinalize;
+              assert plan.initialOutput == "secure-host-install";
+              assert plan.finalOutput == "secure-host";
+              assert plan.installOutput == "secure-host-install";
+              assert plan.deferredFeatures == [ "secure-boot" ];
+              pkgs.runCommand "install-plan-secure-boot" { } ''
+                touch "$out"
+              '';
+            install-plan-direct =
+              let
+                plan = mkInstallPlan {
+                  hostName = "plain-host";
+                  hostVars = { };
+                };
+              in
+              assert (!plan.needsFinalize);
+              assert plan.initialOutput == "plain-host";
+              assert plan.finalOutput == "plain-host";
+              assert plan.installOutput == "plain-host-install";
+              assert plan.deferredFeatures == [ ];
+              pkgs.runCommand "install-plan-direct" { } ''
+                touch "$out"
+              '';
+          };
         in
-        hostChecks // homeChecks
+        hostChecks // installHostChecks // homeChecks // installPlanChecks
       );
     };
 }

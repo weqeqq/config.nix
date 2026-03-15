@@ -43,7 +43,7 @@ Edit [hosts/desktop/vars.nix](/home/weqeq/Projects/config.nix/hosts/desktop/vars
 - replace `ownerAgeRecipients` with your real public `age` recipient;
 - replace the placeholder SSH public key in `user.openssh.authorizedKeys`;
 - change hostname, locale, timezone or username if needed.
-- leave `boot.secureBoot.enable = false` for the first install; enable it only after the machine has completed one normal boot.
+- set `boot.secureBoot.enable` to the final desired state; the installer will pick an install-safe profile automatically when Secure Boot must be deferred.
 
 Useful commands for the owner key:
 
@@ -88,6 +88,7 @@ nix --extra-experimental-features 'nix-command flakes' run .#install-host -- --h
 What the installer does:
 
 - bootstraps a writable repository checkout if you launch it from `github:...#install-host`;
+- evaluates `lib.installPlan.<host>` and picks either `<host>` or `<host>-install` automatically;
 - wipes and partitions the disk with `disko`;
 - mounts the target filesystem under `/mnt`;
 - generates `hosts/<host>/hardware-configuration.nix`;
@@ -95,7 +96,9 @@ What the installer does:
 - writes `secrets/hosts/<host>.age.pub` into the repo;
 - regenerates `.sops.yaml`;
 - prompts for the initial user password and stores its hash encrypted in `secrets/hosts/<host>.yaml`;
-- runs `nixos-install --flake .#<host>`.
+- copies the resulting repo snapshot into `/mnt/etc/nixos`;
+- writes a first-boot finalization marker if deferred features exist;
+- runs `nixos-install` from `path:/mnt/etc/nixos`.
 
 If `secrets/hosts/<host>.yaml` already exists and `sops` can decrypt it through `--age-key-file` or `SOPS_AGE_KEY_FILE`, the installer reuses the existing secret and skips the password prompt.
 
@@ -103,41 +106,20 @@ For `vm-test` the flow is the same, but the target profile enables `qemu-guest` 
 
 ## Secure Boot
 
-Secure Boot support is implemented with `lanzaboote`, but it is intentionally opt-in per host. The safe flow is:
+Secure Boot support is implemented as a two-phase flow:
 
-1. Install and boot once with the default `systemd-boot` setup.
-2. Confirm that the machine is really booting in `UEFI` mode and currently uses `systemd-boot`:
+1. Keep `boot.secureBoot.enable = true` in the host vars from the start if that is your desired final state.
+2. The installer will install `<host>-install`, which keeps `systemd-boot` active and leaves Secure Boot deferred.
+3. On the first real boot, `config-nix-finalize.service` runs before `greetd`, creates keys under `/var/lib/sbctl`, builds the signed final profile with `lanzaboote`, enrolls keys with `sbctl`, and reboots.
+4. The next boot should land in the final signed profile.
 
-```bash
-bootctl status
-```
-
-3. Generate Secure Boot keys on the installed machine:
+If the finalizer fails, the machine stays bootable in the install-safe profile and you can rerun it manually:
 
 ```bash
-sudo sbctl create-keys
+sudo bash /etc/nixos/scripts/finalize-host.sh --host desktop --repo /etc/nixos
 ```
 
-4. Flip `boot.secureBoot.enable` to `true` in the host vars file, for example [hosts/desktop/vars.nix](/home/weqeq/Projects/config.nix/hosts/desktop/vars.nix).
-5. Rebuild:
-
-```bash
-sudo nixos-rebuild switch --flake .#desktop
-```
-
-6. Verify that binaries are signed:
-
-```bash
-sudo sbctl verify
-```
-
-7. Reboot into firmware setup mode, clear old custom Secure Boot keys if needed, then enroll your new keys:
-
-```bash
-sudo sbctl enroll-keys --microsoft
-```
-
-After that, reboot with Secure Boot enabled in firmware.
+The canonical repo on the installed machine is `/etc/nixos`, and that is the path the finalizer uses for all rebuilds.
 
 After the first successful boot, commit the generated files:
 
@@ -154,25 +136,25 @@ After the first successful boot, commit the generated files:
 Rebuild the current system:
 
 ```bash
-sudo nixos-rebuild switch --flake .#desktop
+sudo nixos-rebuild switch --flake /etc/nixos#desktop
 ```
 
 Or for the VM host:
 
 ```bash
-sudo nixos-rebuild switch --flake .#vm-test
+sudo nixos-rebuild switch --flake /etc/nixos#vm-test
 ```
 
 Build only the Home Manager config:
 
 ```bash
-nix build .#homeConfigurations."weqeq@desktop".activationPackage
+nix build /etc/nixos#homeConfigurations."weqeq@desktop".activationPackage
 ```
 
 Update inputs:
 
 ```bash
-nix flake update
+nix flake update /etc/nixos
 ```
 
 ## Where to add packages
@@ -194,7 +176,7 @@ User packages:
 Rekey one host after changing recipients or copying the repo to a fresh machine:
 
 ```bash
-nix --extra-experimental-features 'nix-command flakes' run .#rekey-host -- --host desktop
+nix --extra-experimental-features 'nix-command flakes' run /etc/nixos#rekey-host -- --host desktop --repo /etc/nixos
 ```
 
 Edit a host secret:
